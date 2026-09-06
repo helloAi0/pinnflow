@@ -21,7 +21,15 @@ runs/
 # Deployment & Logs
 backend/.env
 web/.env.local
-*.logvenv/
+
+# FIX: Separated the merged line to correctly ignore logs and environment twins
+*.log
+venv/
+.venv/
+
 .pytest_cache/
 __pycache__/
 runs/
+
+build/
+*.egg-info/

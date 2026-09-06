@@ -6,7 +6,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ui/ /app/src/ui/
-COPY final_pinn_model.pth .
+
+# FIX: Wildcard bracket notation prevents build failure if weights are absent in CI
+COPY final_pinn_model.pt[h] /app/
+
+# FIX: Pre-create datasets folder and safely copy contents if they exist
+RUN mkdir -p /app/datasets
 COPY datasets/ /app/datasets/
 
 EXPOSE 8501

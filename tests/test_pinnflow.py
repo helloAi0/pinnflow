@@ -2,7 +2,7 @@ import pytest
 import torch
 import numpy as np
 from fastapi.testclient import TestClient
-
+from src.api.main import app
 from src.models.mlp import NavierStokesMLP
 from src.data.observation_dataset import DataPipelineManager
 from src.deployment.api import app

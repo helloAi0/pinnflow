@@ -92,3 +92,4 @@ uvicorn==0.52.4
 vtk==9.6.2
 watchdog==6.0.0
 websockets==16.1.1
+httpx>=0.23.0

@@ -6,9 +6,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application and model weights
+# Copy application modules
 COPY src/ /app/src/
-COPY final_pinn_model.pth .
+
+# FIX: Wildcard bracket notation prevents build failure if weights are absent in CI
+COPY final_pinn_model.pt[h] /app/
 
 EXPOSE 8000
 

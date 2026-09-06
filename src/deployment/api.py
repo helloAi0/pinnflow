@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
-
+from src.api.main import app
 from src.models.mlp import NavierStokesMLP
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')

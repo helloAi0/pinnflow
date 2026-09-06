@@ -31,11 +31,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for frontend integration in Phase 24
+# FIX: Enable CORS for frontend integration while preventing credential/wildcard crashes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # Fixed: Must be False when using wildcard origin '*'
     allow_methods=["*"],
     allow_headers=["*"],
 )

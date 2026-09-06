@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import requests
 import numpy as np
@@ -23,7 +24,9 @@ x_max = col2.number_input("x max", value=8.0, step=0.5)
 y_min = col1.number_input("y min", value=-2.0, step=0.5)
 y_max = col2.number_input("y max", value=2.0, step=0.5)
 
-API_URL = "http://localhost:8000/predict/field"
+# FIX: Dynamically read API base URL from ecosystem environment variables with structural fallback
+BASE_API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+TARGET_ENDPOINT = f"{BASE_API_URL}/predict/field"
 
 payload = {
     "x_min": float(x_min),
@@ -42,7 +45,7 @@ if st.sidebar.button("Refresh Field", type="primary"):
 
 try:
     with st.spinner("Querying PINN REST API..."):
-        response = requests.post(API_URL, json=payload, timeout=10)
+        response = requests.post(TARGET_ENDPOINT, json=payload, timeout=10)
         
     if response.status_code == 200:
         data = response.json()
@@ -95,4 +98,4 @@ try:
         st.error(f"API Error ({response.status_code}): {response.text}")
 
 except Exception as e:
-        st.error(f"Failed to connect to FastAPI backend at `{API_URL}`.\nEnsure `python -m src.api.main` is active.\n\nError: {e}")
+        st.error(f"Failed to connect to FastAPI backend at `{TARGET_ENDPOINT}`.\nEnsure the network path is active.\n\nError: {e}")

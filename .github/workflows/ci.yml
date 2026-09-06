@@ -16,8 +16,13 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
 
+    - name: Create Dummy Artifacts for CI
+      run: |
+        touch final_pinn_model.pth
+        mkdir -p datasets
+
     - name: Build API Container
-      run: docker build -t pinnflow-api -f Dockerfile.api .
+      run: docker build -t pinnflow-api -f backend.Dockerfile .
 
     - name: Build UI Container
-      run: docker build -t pinnflow-ui -f Dockerfile.ui .
+      run: docker build -t pinnflow-ui -f frontend.Dockerfile .

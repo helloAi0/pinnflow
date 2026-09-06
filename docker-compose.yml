@@ -7,8 +7,10 @@ services:
       dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
+    # FIX: Mount the whole app directory rather than a specific missing file 
+    # to prevent Docker from creating fake directories on your host machine.
     volumes:
-      - ./final_pinn_model.pth:/app/final_pinn_model.pth
+      - .:/app
     
   ui:
     build:
@@ -16,5 +18,7 @@ services:
       dockerfile: Dockerfile.ui
     ports:
       - "8501:8501"
+    volumes:
+      - .:/app
     depends_on:
       - api
