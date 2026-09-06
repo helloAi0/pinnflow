@@ -3,6 +3,7 @@ Name: pinnflow
 Version: 0.1.0
 Summary: Physics-Informed Neural Networks for Unsteady Flow Reconstruction
 Requires-Python: >=3.10
+License-File: LICENSE
 Requires-Dist: torch>=2.0.0
 Requires-Dist: numpy>=1.24.0
 Requires-Dist: scipy>=1.10.0
@@ -19,3 +20,4 @@ Requires-Dist: black; extra == "dev"
 Requires-Dist: flake8; extra == "dev"
 Requires-Dist: isort; extra == "dev"
 Requires-Dist: jupyter; extra == "dev"
+Dynamic: license-file

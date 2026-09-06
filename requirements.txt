@@ -49,8 +49,6 @@ onnxscript==0.7.1
 packaging==26.3
 pandas==2.3.3
 pillow==12.3.0
-# Editable install with no version control (pinnflow==0.1.0)
--e c:\users\user\documents\pinnflow
 platformdirs==4.11.7
 plotly==7.0.0
 pluggy==1.6.0
