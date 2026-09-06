@@ -2,7 +2,7 @@ services:
   # The Scientific FastAPI Backend
   - type: web
     name: pinnflow-api
-    env: docker
+    runtime: docker
     dockerfilePath: ./Dockerfile.api
     plan: free
     healthCheckPath: /docs
@@ -10,10 +10,9 @@ services:
   # The Streamlit Interactive UI
   - type: web
     name: pinnflow-ui
-    env: docker
+    runtime: docker
     dockerfilePath: ./Dockerfile.ui
-    plan: free
+    plan: starter # Upgraded to resolve the 1-free-service limit
     envVars:
       - key: API_URL
-        # This will securely route internal traffic from the UI to the API on Render
         value: http://pinnflow-api:8000/predict/field
