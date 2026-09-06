@@ -1,0 +1,23 @@
+name: PINNFlow CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build API Container
+      run: docker build -t pinnflow-api -f Dockerfile.api .
+
+    - name: Build UI Container
+      run: docker build -t pinnflow-ui -f Dockerfile.ui .
