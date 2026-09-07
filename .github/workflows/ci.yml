@@ -21,8 +21,10 @@ jobs:
         touch final_pinn_model.pth
         mkdir -p datasets
 
+    # FIX: References the correct filename targets matching the root repository footprint
     - name: Build API Container
-      run: docker build -t pinnflow-api -f backend.Dockerfile .
+      run: docker build -t pinnflow-api -f Dockerfile.api .
 
+    # FIX: References the correct filename targets matching the root repository footprint
     - name: Build UI Container
-      run: docker build -t pinnflow-ui -f frontend.Dockerfile .
+      run: docker build -t pinnflow-ui -f Dockerfile.ui .
