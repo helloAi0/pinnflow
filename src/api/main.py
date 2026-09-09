@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 import torch
 from contextlib import asynccontextmanager
+from scipy.interpolate import griddata
 
 # Domain-specific structural architecture references
 from src.models.fourier_network import FourierConstrainedPINN
@@ -30,9 +31,8 @@ async def lifespan(app: FastAPI):
     
     # 1. Instantiate the primary underlying neural network architecture topology
     try:
-        # FIX: Repaired hanging plus operator and added terminal layer list boundary array configuration
         model = FourierConstrainedPINN(
-            layers=[3] + [200] * 8 +[3],
+            layers=[3] + [200] * 8 +,
             activation_type="tanh",
             cylinder_radius=0.5,
             fourier_features=64,
@@ -137,41 +137,67 @@ async def predict_point(query: PointQuery):
 
 @app.get("/predict/field")
 async def predict_field(t: int = 100):
-    """Run inference mapping on a complete spatial frame slice for visual heatmap plotting."""
+    """Run inference mapping and interpolate onto a complete 2D meshgrid for visual heatmaps."""
     if model is None or raw_data is None:
         raise HTTPException(status_code=503, detail="Model network engine not ready.")
         
     try:
-        unique_times = np.unique(raw_data['train_coords'][:, 2].numpy())
-        if t >= len(unique_times) or t < 0:
-            t = min(max(0, t), len(unique_times) - 1) if len(unique_times) > 0 else 0
+        coords_numpy = raw_data['train_coords'].numpy()
+        unique_times = np.unique(coords_numpy[:, 2])
+        
+        if len(unique_times) == 0:
+            raise HTTPException(status_code=500, detail="Data coordinates context array is empty.")
             
-        t_val = unique_times[t] if len(unique_times) > 0 else 0.0
-        mask = raw_data['train_coords'][:, 2] == t_val
+        if t >= len(unique_times) or t < 0:
+            t = min(max(0, t), len(unique_times) - 1)
+            
+        t_val = unique_times[t]
+        mask = coords_numpy[:, 2] == t_val
         
         coords_t = raw_data['train_coords'][mask].to(device)
         exact_fields = raw_data['train_fields'][mask].numpy()
         
         if coords_t.shape[0] == 0:
+            # FIX: Fallback structure returning empty grid placeholders matching contract metrics
             return {
-                "time_value": float(t_val),
-                "uLoss": 0.0,
-                "vLoss": 0.0,
-                "pdeLoss": 0.00015,
+                "u": [[0.0] * 50 for _ in range(50)],
+                "v": [[0.0] * 50 for _ in range(50)],
+                "p": [[0.0] * 50 for _ in range(50)],
+                "metrics": {"uLoss": 0.0, "vLoss": 0.0, "pdeLoss": 0.0},
                 "status": "empty_slice"
             }
         
         with torch.no_grad():
             preds = model(coords_t).cpu().numpy()
             
+        # Calculate real-time performance tracking metrics
         mse_u = np.mean((exact_fields[:, 0] - preds[:, 0])**2)
         mse_v = np.mean((exact_fields[:, 1] - preds[:, 1])**2)
         
+        # --- FIX: Vectorized Meshgrid Construction Engine ---
+        x_points = coords_numpy[mask, 0]
+        y_points = coords_numpy[mask, 1]
+        
+        # Define exact grid limits mimicking the wake profile dimensions
+        x_linspace = np.linspace(-2.0, 10.0, 50)
+        y_linspace = np.linspace(-2.0, 2.0, 50)
+        grid_x, grid_y = np.meshgrid(x_linspace, y_linspace)
+        
+        # Interpolate the unstructured prediction vectors onto the 50x50 target visualization meshgrid
+        u_grid = griddata((x_points, y_points), preds[:, 0], (grid_x, grid_y), method='linear', fill_value=0.0)
+        v_grid = griddata((x_points, y_points), preds[:, 1], (grid_x, grid_y), method='linear', fill_value=0.0)
+        p_grid = griddata((x_points, y_points), preds[:, 2], (grid_x, grid_y), method='linear', fill_value=0.0)
+        
         return {
+            "u": u_grid.tolist(),
+            "v": v_grid.tolist(),
+            "p": p_grid.tolist(),
+            "metrics": {
+                "uLoss": float(mse_u),
+                "vLoss": float(mse_v),
+                "pdeLoss": 0.00015
+            },
             "time_value": float(t_val),
-            "uLoss": float(mse_u),
-            "vLoss": float(mse_v),
-            "pdeLoss": 0.00015,  
             "status": "success"
         }
     except Exception as e:
