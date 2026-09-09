@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #0f172a; /* Slate 900 - Dark Grafana Theme */
+    --foreground: #f8fafc;
+    --border: #1e293b;
+    --color-primary: #3b82f6; /* Blue 500 */
+    --primary-foreground: #ffffff;
+    --color-residual-low: #2563eb; /* RdBu primitive low */
+    --color-residual-high: #dc2626; /* RdBu primitive high */
+    --color-danger: #ef4444;
+  }
+}

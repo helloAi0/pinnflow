@@ -1,35 +1,45 @@
-# Environments
+# ==========================================
+# 1. Environments & Virtual Environments
+# ==========================================
 .env
-.venv
+.venv/
 env/
 venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# IDEs
+# ==========================================
+# 2. IDE Environments & System Junk
+# ==========================================
 .vscode/
 .idea/
+.DS_Store
+*.log
 
-# Data & Artifacts
-datasets/raissi_cylinder/*.mat
-datasets/raissi_cylinder/*.h5
-results/*/
+# ==========================================
+# 3. Scientific Data & Large Model Artifacts
+# ==========================================
+data/
+datasets/
+wandb/
+results/
 runs/
+*.mat
+*.h5
 *.pt
 *.pth
 
-# Deployment & Logs
-backend/.env
-web/.env.local
+# ==========================================
+# 4. Frontend Asset Modules & Dist Bundles
+# ==========================================
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
 
-# FIX: Separated the merged line to correctly ignore logs and environment twins
-*.log
-venv/
-.venv/
-
-.pytest_cache/
-__pycache__/
-runs/
-
+# ==========================================
+# 5. Compiler & Python Packaging Wrappers
+# ==========================================
 build/
+dist/
 *.egg-info/
