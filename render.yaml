@@ -1,18 +1,42 @@
 services:
-  # The Scientific FastAPI Backend
+  # ==========================================
+  # 1. The Scientific FastAPI Backend Service
+  # ==========================================
   - type: web
     name: pinnflow-api
     runtime: docker
     dockerfilePath: ./Dockerfile.api
     plan: free
-    healthCheckPath: /docs
+    healthCheckPath: /health
 
-  # The Streamlit Interactive UI
+  # ==========================================
+  # 2. The React Vite Tailwind Web Dashboard
+  # ==========================================
+  - type: web
+    name: pinnflow-frontend
+    # FIX: Switched from 'env: static' to modern 'runtime: static' parameter
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: pinnflow-api
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # ==========================================
+  # 3. The Streamlit Interactive UI (Legacy)
+  # ==========================================
   - type: web
     name: pinnflow-ui
     runtime: docker
     dockerfilePath: ./Dockerfile.ui
-    plan: starter # Upgraded to resolve the 1-free-service limit
+    plan: starter 
     envVars:
       - key: API_URL
         value: http://pinnflow-api:8000/predict/field

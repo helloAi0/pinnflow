@@ -1,21 +1,34 @@
 import os
-import numpy as np
 import torch
+import numpy as np
+import scipy.io
+from scipy.interpolate import griddata
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.models.fourier_network import FourierConstrainedPINN
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Physical constants (nondimensional formulation)
-REYNOLDS_NUMBER = 100.0
-NU = 1.0 / REYNOLDS_NUMBER
+# Add h5py import for MAT v7.3 files (optional dependency)
+try:
+    import h5py
+except ImportError:
+    h5py = None
 
 # ==========================================
-# 1. Model initialized at module level so
-#    TestClient can access it without a 503
+# Configuration & Paths
+# ==========================================
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+CHECKPOINT_PATH = "artifacts/fourier_constrained_seed8008.pth"
+DATA_PATH = "data/cylinder_nektar_wake.mat"
+
+# Physics Config (nondimensional formulation)
+REYNOLDS_NUMBER = 100.0
+NU = 0.01  # = 1/Re; hard fallback per spec
+
+# ==========================================
+# Model initialized at module level so
+# TestClient can access it without a 503
 # ==========================================
 model = FourierConstrainedPINN(
     layers=[3] + [200] * 8 + [3],
@@ -25,19 +38,21 @@ model = FourierConstrainedPINN(
     sigma=1.0
 ).to(device)
 
-# 2. Attempt to load weights, but allow fallback for fresh test environments
+# Attempt to load weights, but allow fallback for fresh test environments
 WEIGHT_PATHS = [
-    "artifacts/fourier_constrained_seed8008.pth",
+    CHECKPOINT_PATH,
     "wandb/fourier_model_seed_8008.pth",
     "final_pinn_model.pth"
 ]
 weights_bound = False
+loaded_checkpoint = None
 for _path in WEIGHT_PATHS:
     if os.path.exists(_path):
         try:
             model.load_state_dict(torch.load(_path, map_location=device))
             print(f"[+] Weights bound from checkpoint: {_path}")
             weights_bound = True
+            loaded_checkpoint = os.path.basename(_path)
             break
         except Exception as e:
             print(f"[-] Failed to load {_path}: {e}")
@@ -53,7 +68,7 @@ USING_TRAINED_WEIGHTS = weights_bound
 
 
 # ==========================================
-# 3. Pydantic Schemas to match the test suite payloads
+# Pydantic Schemas (test-suite contract)
 # ==========================================
 class PointRequest(BaseModel):
     x: float = Field(..., description="X spatial coordinate")
@@ -134,19 +149,59 @@ def compute_vorticity(coords_tensor: torch.Tensor, net: torch.nn.Module):
 
 
 # ==========================================
-# App + CORS
+# Reference Dataset Loader (scipy + MAT v7.3 / h5py fallback)
+# ==========================================
+def load_reference_dataset(data_path: str):
+    """
+    Loads the DNS reference dataset, supporting:
+      - MATLAB v4 / v6 / v7  -> scipy.io.loadmat
+      - MATLAB v7.3 (HDF5)   -> h5py (transposed to match scipy's column-major layout)
+
+    Returns (X_star, t_star, U_star, p_star).
+    """
+    # Attempt standard scipy load (v4, v6, v7)
+    try:
+        data = scipy.io.loadmat(data_path)
+        return (
+            data['X_star'],
+            data['t'].flatten(),
+            data['U_star'],
+            data['p_star']
+        )
+    except NotImplementedError:
+        # Fallback for MATLAB v7.3 HDF5 files
+        if h5py is None:
+            raise HTTPException(status_code=500, detail="Install 'h5py' to read MATLAB v7.3 format.")
+
+        with h5py.File(data_path, 'r') as f:
+            # MATLAB v7.3 stores arrays transposed relative to scipy's layout
+            X_star = np.array(f['X_star']).T
+            t_star = np.array(f['t']).flatten()
+            U_star = np.array(f['U_star']).T
+            p_star = np.array(f['p_star']).T
+        return X_star, t_star, U_star, p_star
+
+
+# ==========================================
+# App + CORS (explicit production origins)
 # ==========================================
 app = FastAPI(
     title="PINNflow Live Science Engine",
     description="REST API for querying Fourier-Constrained fluid dynamics predictions "
                 "with exact automatic differentiation of the Navier-Stokes equations.",
-    version="2.1.2"
+    version="2.2.1"
 )
+
+origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://pinnflow-frontend.onrender.com"
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "*"],
-    allow_credentials=False,
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -156,15 +211,17 @@ app.add_middleware(
 # Health Check Routes
 # ==========================================
 @app.get("/")
-def health_check():
+def root():
     return {"status": "healthy", "service": "pinnflow-api"}
 
 
 @app.get("/health")
-def health():
+def health_check():
     return {
         "status": "ok",
-        "weights_loaded": USING_TRAINED_WEIGHTS
+        "checkpoint": loaded_checkpoint,
+        "weights_loaded": USING_TRAINED_WEIGHTS,
+        "reference_dataset_available": os.path.exists(DATA_PATH)
     }
 
 
@@ -183,14 +240,11 @@ def predict_point(req: PointRequest):
         v_val = preds[0, 1].item()
         p_val = preds[0, 2].item()
 
-        # Calculate velocity magnitude for the test suite
-        vel_mag = (u_val ** 2 + v_val ** 2) ** 0.5
-
         response = {
             "u": u_val,
             "v": v_val,
             "p": p_val,
-            "velocity_magnitude": vel_mag
+            "velocity_magnitude": (u_val ** 2 + v_val ** 2) ** 0.5
         }
 
         if req.compute_vorticity:
@@ -231,7 +285,7 @@ def predict_field(req: FieldRequest):
         v_grid = v.detach().cpu().numpy().reshape(ny, nx)
         p_grid = p.detach().cpu().numpy().reshape(ny, nx)
 
-        # Calculate velocity magnitude elementwise: |V| = sqrt(u^2 + v^2)
+        # Velocity magnitude elementwise: |V| = sqrt(u^2 + v^2)
         vel_mag_grid = np.sqrt(u_grid ** 2 + v_grid ** 2)
 
         response = {
@@ -262,6 +316,78 @@ def predict_field(req: FieldRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Reference Ground Truth (DNS / Nektar wake)
+# ==========================================
+@app.post("/reference/field")
+def reference_field(req: FieldRequest):
+    """Interpolates genuine DNS ground truth data for the requested grid."""
+    if not os.path.exists(DATA_PATH):
+        raise HTTPException(status_code=503, detail="Reference dataset file not found.")
+
+    try:
+        # Check if file is a Git LFS pointer text file (first 100 bytes only)
+        with open(DATA_PATH, "rb") as f:
+            header = f.read(100)
+            if b"version https://git-lfs" in header or b"http" in header[:10]:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Dataset file is a Git LFS pointer. Run 'git lfs pull' to fetch binary file."
+                )
+
+        # Load dataset: scipy (v4/v6/v7) with automatic h5py fallback for v7.3
+        X_star, t_star, U_star, p_star = load_reference_dataset(DATA_PATH)
+
+        # Find closest time snapshot
+        t_idx = int(np.argmin(np.abs(t_star - req.t)))
+
+        # Exact points from dataset (handle 3D U_star [N x 2 x T] or 2D variant)
+        points = X_star
+        u_exact = U_star[:, 0, t_idx] if U_star.ndim == 3 else U_star[:, t_idx]
+        v_exact = U_star[:, 1, t_idx] if U_star.ndim == 3 else np.zeros_like(u_exact)
+        p_exact = p_star[:, t_idx]
+
+        # Requested grid
+        x_range = np.linspace(req.x_min, req.x_max, req.nx)
+        y_range = np.linspace(req.y_min, req.y_max, req.ny)
+        X_grid, Y_grid = np.meshgrid(x_range, y_range)
+
+        # Interpolate scattered data onto the structured grid
+        u_interp = griddata(points, u_exact, (X_grid, Y_grid), method='cubic', fill_value=0.0)
+        v_interp = griddata(points, v_exact, (X_grid, Y_grid), method='cubic', fill_value=0.0)
+        p_interp = griddata(points, p_exact, (X_grid, Y_grid), method='cubic', fill_value=0.0)
+
+        response = {
+            "x": X_grid.tolist(),
+            "y": Y_grid.tolist(),
+            "u": u_interp.tolist(),
+            "v": v_interp.tolist(),
+            "p": p_interp.tolist(),
+            "velocity_magnitude": np.sqrt(u_interp ** 2 + v_interp ** 2).tolist(),
+            "metrics": {
+                "time_snapshot_requested": req.t,
+                "time_snapshot_matched": float(t_star[t_idx]),
+                "time_index": t_idx
+            },
+            "status": "success"
+        }
+
+        if req.compute_vorticity:
+            # Finite-difference vorticity on the structured grid (ground truth is scattered,
+            # so autograd doesn't apply here)
+            dy = y_range[1] - y_range[0] if req.ny > 1 else 1.0
+            dx = x_range[1] - x_range[0] if req.nx > 1 else 1.0
+            dv_dy = np.gradient(v_interp, dy, axis=0)
+            du_dx = np.gradient(u_interp, dx, axis=1)
+            response["vorticity"] = (dv_dy - du_dx).tolist()
+
+        return response
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Dataset processing error: {str(e)}")
 
 
 if __name__ == "__main__":

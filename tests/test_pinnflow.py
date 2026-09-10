@@ -4,9 +4,11 @@ import torch
 import numpy as np
 from starlette.testclient import TestClient
 
+# Core system component references
 from src.api.main import app
 from src.models.network import NavierStokesPINN
 from src.data.pipeline import CylinderDataPipeline
+from src.geometry.domain import CylinderDomain
 
 # Initialize the test client for API routing validation
 client = TestClient(app)
@@ -16,7 +18,6 @@ client = TestClient(app)
 # ==========================================
 def test_model_forward_pass():
     """Verify that the core PINN network handles [N, 3] inputs and returns [N, 3] shapes."""
-    # Initialize using the Phase 3 architecture bounds configuration layout (3 -> hidden -> 3)
     topology = [3, 64, 64, 3]
     model = NavierStokesPINN(layers=topology, activation_type="tanh")
     model.eval()
@@ -37,7 +38,7 @@ def test_data_pipeline_shapes():
     """Verify data preprocessing formats while handling missing files gracefully in CI."""
     pipeline = CylinderDataPipeline(data_dir="data")
     
-    # FIX: Evaluate data schema without breaking if raw .mat binaries are missing in CI runner context
+    # Evaluate data schema without breaking if raw .mat binaries are missing in CI runner context
     if os.path.exists(pipeline.filepath):
         try:
             datasets = pipeline.load_and_preprocess(observation_budget=500, noise_level=0.0)
@@ -52,22 +53,42 @@ def test_data_pipeline_shapes():
             pytest.fail(f"Local file parsing failed despite existence check: {e}")
     else:
         print("[!] Remote MAT dataset not downloaded yet. Executing dummy framework assertions for CI.")
-        # Simulating matching structural layouts programmatically
-        mock_train_coords = torch.randn(100, 3) # (x, y, t)
-        mock_train_fields = torch.randn(100, 3) # (u, v, p)
+        mock_train_coords = torch.randn(100, 3)  # (x, y, t)
+        mock_train_fields = torch.randn(100, 3)  # (u, v, p)
         
         assert mock_train_coords.shape == (100, 3)
         assert mock_train_fields.shape == (100, 3)
 
 # ==========================================
-# 3. Automatic Differentiation Engine Tests
+# 3. Geometric Domain Boundary Validation Tests
+# ==========================================
+def test_cylinder_domain_bounds():
+    """Verify that the real geometric mesh boundary tracks spatial limits and obstacle masks accurately."""
+    domain = CylinderDomain()
+    
+    # Verify core domain box limits
+    assert domain.x_min == 1.0
+    assert domain.x_max == 8.0
+    
+    # Test internal obstacle exclusion mask limits using the correct fluid boundary method
+    # 1. Inside solid cylinder wall (Should return False for being inside the fluid active mesh)
+    assert not domain.is_inside_fluid(0.0, 0.0)
+    
+    # 2. Outside cylinder wall, inside operational bounding box limits (Should return True)
+    assert domain.is_inside_fluid(2.0, 0.0)
+    
+    # 3. Completely outside maximum domain box boundary constraints (Should return False)
+    assert not domain.is_inside_fluid(10.0, 0.0)
+
+
+# ==========================================
+# 4. Automatic Differentiation Engine Tests
 # ==========================================
 def test_autograd_gradient_computation():
     """Verify that autograd computes non-zero continuous derivatives through the engine."""
     topology = [3, 32, 32, 3]
     model = NavierStokesPINN(layers=topology, activation_type="tanh")
     
-    # Enable track points hooks for computing derivatives
     coords = torch.randn(10, 3, requires_grad=True)
     preds = model(coords)
     u = preds[:, 0:1]
@@ -80,7 +101,7 @@ def test_autograd_gradient_computation():
     assert torch.abs(u_x).sum().item() > 0.0, "Autograd produced dead zero gradients across parameters."
 
 # ==========================================
-# 4. API End-to-End Routing Tests
+# 5. API End-to-End Routing Tests
 # ==========================================
 def test_fastapi_predict_endpoint():
     """Verify structural network handshakes with the API routing engine."""

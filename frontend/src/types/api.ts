@@ -1,4 +1,3 @@
-
 export interface FieldRequest {
   x_min: number
   x_max: number
@@ -20,23 +19,10 @@ export interface FieldResponse {
   vorticity?: number[][]
 }
 
-export interface PointRequest {
-  x: number
-  y: number
-  t: number
-  compute_vorticity?: boolean
-}
-
-export interface PointResponse {
-  u: number
-  v: number
-  p: number
-  velocity_magnitude: number
-  vorticity?: number
-}
-
 export interface HealthResponse {
   status: string
+  checkpoint: string | null
+  reference_dataset_available: boolean
 }
 
 export type FieldVariable = 'u' | 'v' | 'p' | 'velocity_magnitude' | 'vorticity'
