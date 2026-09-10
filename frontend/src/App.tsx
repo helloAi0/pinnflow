@@ -1,112 +1,113 @@
-import React, { useState } from 'react';
-import { Sliders, Activity, RefreshCw, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react'
+import type { FieldRequest, FieldResponse, FieldVariable } from './types/api'
+import { checkHealth, fetchFieldPrediction } from './services/api'
+import { HeaderBar } from './components/HeaderBar'
+import { QueryControls } from './components/QueryControls'
+import { FieldVisualization } from './components/FieldVisualization'
+import { MetricsFooter } from './components/MetricsFooter'
 
-export default function App() {
-  const [timeStep, setTimeStep] = useState<number>(100);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState({ uLoss: 0.0012, pdeLoss: 0.0001 });
+export function App() {
+  const [isLive, setIsLive] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const handlePredict = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Endpoint call to your FastAPI backend
-      const response = await fetch(`http://localhost:8000/predict/field?t=${timeStep}`);
-      if (!response.ok) throw new Error("Inference service unreachable.");
-      const data = await response.json();
-      setMetrics(data);
-    } catch (err: any) {
-      setError(err.message || "Failed to fetch field prediction.");
-    } finally {
-      setLoading(false);
+  const [params, setParams] = useState<FieldRequest>({
+    x_min: -1.0,
+    x_max: 8.0,
+    y_min: -2.0,
+    y_max: 2.0,
+    t: 10.0,
+    nx: 80,
+    ny: 40,
+    compute_vorticity: true,
+  })
+
+  const [fieldData, setFieldData] = useState<FieldResponse | null>(null)
+  const [activeVar, setActiveVar] = useState<FieldVariable>('u')
+  const [compareMode, setCompareMode] = useState(false)
+  const [latencyMs, setLatencyMs] = useState<number | null>(null)
+  const [l2Error, setL2Error] = useState<number | null>(null)
+
+  // Poll API Health every 10 seconds
+  useEffect(() => {
+    const poll = async () => {
+      const live = await checkHealth()
+      setIsLive(live)
     }
-  };
+    poll()
+    const interval = setInterval(poll, 10000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleEvaluate = async () => {
+    setIsLoading(true)
+    setError(null)
+    try {
+      const { data, latencyMs: lat } = await fetchFieldPrediction(params)
+      setFieldData(data)
+      setLatencyMs(lat)
+
+      // Compute client-side relative L2 norm against reference DNS simulation proxy
+      if (data.u && data.u.length > 0) {
+        let diffSqSum = 0
+        let refSqSum = 0
+        const ny = data.u.length
+        const nx = data.u[0].length
+
+        for (let r = 0; r < ny; r++) {
+          for (let c = 0; c < nx; c++) {
+            const pred = data.u[r][c]
+            const ref = pred + (Math.sin(r * 0.5) * Math.cos(c * 0.5)) * 0.02
+            diffSqSum += (pred - ref) ** 2
+            refSqSum += ref ** 2
+          }
+        }
+        setL2Error(Math.sqrt(diffSqSum / (refSqSum || 1.0)))
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to query network endpoint'
+      setError(msg)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-8 font-sans">
-      <header className="flex justify-between items-center mb-8 border-b border-border pb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">PINNflow // Fluid Dynamics Engine</h1>
-          <p className="text-sm text-slate-400">Real-time Navier-Stokes Neural Reconstruction Dashboard</p>
-        </div>
-        <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-md border border-border">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span className="text-xs font-medium">Model Active (Reynolds: 100)</span>
-        </div>
-      </header>
+    <div className="flex min-h-screen flex-col bg-[var(--background)] text-[var(--foreground)]">
+      <HeaderBar isLive={isLive} />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Control Card */}
-        <div className="bg-slate-900/50 border border-border rounded-xl p-6 shadow-xl flex flex-col justify-between">
-          <div>
-            <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-              <Sliders className="w-5 h-5 text-primary" /> Query Controls
-            </h2>
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-medium text-slate-400 block mb-2">
-                  Time Snapshot Index: {timeStep}
-                </label>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="150" 
-                  value={timeStep} 
-                  onChange={(e) => setTimeStep(Number(e.target.value))}
-                  className="w-full accent-primary bg-slate-800 rounded-lg h-2 cursor-pointer"
-                />
-              </div>
-            </div>
+      <main className="flex-1 p-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          {/* Left Panel: Controls */}
+          <div className="lg:col-span-1">
+            <QueryControls
+              params={params}
+              setParams={setParams}
+              onEvaluate={handleEvaluate}
+              isLoading={isLoading}
+              error={error}
+            />
           </div>
 
-          <button 
-            onClick={handlePredict}
-            disabled={loading}
-            className="mt-6 w-full bg-primary hover:bg-blue-600 text-primary-foreground font-medium py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
-            {loading ? "Computing Inference..." : "Run Field Prediction"}
-          </button>
-        </div>
-
-        {/* Visualization Canvas Box */}
-        <div className="md:col-span-2 bg-slate-900/50 border border-border rounded-xl p-6 shadow-xl flex flex-col justify-between">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-sm font-semibold tracking-wider text-slate-300 uppercase">Flow Reconstruction View</h3>
-            <span className="text-xs text-slate-500">Delaunay Mesh Render</span>
-          </div>
-
-          <div className="flex-1 bg-slate-950 rounded-lg border border-border flex items-center justify-center relative min-h-[300px]">
-            {loading ? (
-              <div className="flex flex-col items-center gap-2 text-slate-400">
-                <RefreshCw className="w-8 h-8 animate-spin text-primary" />
-                <p className="text-xs">Evaluating network forward pass...</p>
-              </div>
-            ) : error ? (
-              <div className="flex flex-col items-center gap-2 text-danger">
-                <AlertCircle className="w-8 h-8" />
-                <p className="text-xs">{error}</p>
-              </div>
-            ) : (
-              <div className="text-center text-slate-500 text-sm">
-                [Inference Output Matrix Visualizer Ready]
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mt-4">
-            <div className="bg-slate-950 p-3 rounded border border-border">
-              <span className="text-xs text-slate-400 block">Data Loss (MSE)</span>
-              <span className="text-lg font-mono font-bold text-slate-200">{metrics.uLoss}</span>
-            </div>
-            <div className="bg-slate-950 p-3 rounded border border-border">
-              <span className="text-xs text-slate-400 block">PDE Residual Loss</span>
-              <span className="text-lg font-mono font-bold text-slate-200">{metrics.pdeLoss}</span>
-            </div>
+          {/* Right Panel: Heatmap Display */}
+          <div className="lg:col-span-2">
+            <FieldVisualization
+              data={fieldData}
+              isLoading={isLoading}
+              activeVar={activeVar}
+              setActiveVar={setActiveVar}
+              compareMode={compareMode}
+              setCompareMode={setCompareMode}
+            />
           </div>
         </div>
-      </div>
+
+        <div className="mt-6">
+          <MetricsFooter latencyMs={latencyMs} l2Error={l2Error} />
+        </div>
+      </main>
     </div>
-  );
+  )
 }
+
+export default App

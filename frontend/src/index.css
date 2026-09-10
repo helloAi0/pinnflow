@@ -1,16 +1,39 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
-  :root {
-    --background: #0f172a; /* Slate 900 - Dark Grafana Theme */
-    --foreground: #f8fafc;
-    --border: #1e293b;
-    --color-primary: #3b82f6; /* Blue 500 */
-    --primary-foreground: #ffffff;
-    --color-residual-low: #2563eb; /* RdBu primitive low */
-    --color-residual-high: #dc2626; /* RdBu primitive high */
-    --color-danger: #ef4444;
-  }
+:root {
+  /* Primitives */
+  --slate-950: #020617;
+  --slate-900: #0f172a;
+  --slate-800: #1e293b;
+  --slate-700: #334155;
+  --slate-400: #94a3b8;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --red-600: #dc2626;
+  --emerald-500: #10b981;
+
+  /* Semantic Tokens */
+  --background: var(--slate-950);
+  --surface: var(--slate-900);
+  --border: var(--slate-800);
+  --foreground: #f8fafc;
+  --muted-foreground: var(--slate-400);
+  --color-primary: var(--blue-500);
+  --color-danger: var(--red-600);
+  --color-success: var(--emerald-500);
+
+  /* Field Colormap Tokens */
+  --field-low: #2563eb;
+  --field-mid: #f8fafc;
+  --field-high: #dc2626;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
 }
