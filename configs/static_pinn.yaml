@@ -1,0 +1,33 @@
+# Baseline 2: Standard Static Physics-Informed Neural Network (Raissi et al., 2019)
+experiment_name: "static_pinn"
+model:
+  architecture: "standard_mlp"
+  in_dim: 3
+  out_dim: 3
+  hidden_layers: 6
+  hidden_dim: 128
+  activation: "tanh"
+
+training:
+  budget: 5000
+  noise_level: 0.0
+  split_protocol: "random"
+  val_ratio: 0.1
+  test_ratio: 0.2
+  collocation_points: 10000
+  adam_epochs: 1000
+  lbfgs_epochs: 20
+  learning_rate: 0.001
+  batch_size: 5000
+  seed: 42
+  device: "auto"
+
+loss:
+  strategy: "static"
+  weight_data: 1.0
+  weight_pde: 1.0
+  weight_bc: 1.0
+  weight_gauge: 0.1
+
+output:
+  output_dir: "results/static_pinn"

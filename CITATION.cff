@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use PINNFlow in academic research, please cite it as below."
+authors:
+  - family-names: "PINNFlow Contributors"
+    given-names: "Scientific Machine Learning Research Group"
+title: "PINNFlow: Physics-Informed Neural Networks for Unsteady Incompressible Flow Reconstruction from Sparse Observations"
+version: 2.0.0
+date-released: 2026-09-11
+url: "https://github.com/helloAi0/pinnflow"
+keywords:
+  - physics-informed-neural-networks
+  - scientific-machine-learning
+  - computational-fluid-dynamics
+  - navier-stokes
+  - flow-reconstruction
+  - fourier-features
+license: MIT

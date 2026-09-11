@@ -1,7 +1,17 @@
-# src/models/__init__.py
-from .baseline_network import BaselinePINN
-from .adaptive_network import AdaptivePINN
-from .constrained_network import HardConstrainedPINN as ConstrainedPINN
-from .fourier_network import FourierConstrainedPINN
+from src.models.mlp import NavierStokesMLP
+from src.models.fourier_network import FourierFeaturePINN, FourierConstrainedPINN
+from src.models.adaptive_network import AdaptiveActivationPINN, AdaptivePINN
+from src.models.factory import create_model, count_parameters
+from src.models.checkpoint import save_checkpoint, load_and_validate_checkpoint
 
-__all__ = ["BaselinePINN", "AdaptivePINN", "ConstrainedPINN", "FourierConstrainedPINN"]
+__all__ = [
+    "NavierStokesMLP",
+    "FourierFeaturePINN",
+    "FourierConstrainedPINN",
+    "AdaptiveActivationPINN",
+    "AdaptivePINN",
+    "create_model",
+    "count_parameters",
+    "save_checkpoint",
+    "load_and_validate_checkpoint"
+]

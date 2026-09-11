@@ -1,4 +1,4 @@
-name: PINNFlow CI
+name: PINNFlow Rigorous CI
 
 on:
   push:
@@ -7,24 +7,78 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
+  scientific-python-tests:
+    name: Scientific Python & Analytical Physics Tests
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
-    - name: Create Dummy Artifacts for CI
-      run: |
-        touch final_pinn_model.pth
-        mkdir -p datasets
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "numpy<2" onnx onnxruntime
+          pip install -e .
 
-    # FIX: References the correct filename targets matching the root repository footprint
-    - name: Build API Container
-      run: docker build -t pinnflow-api -f Dockerfile.api .
+      - name: Run Pytest Suite (Scientific, Unit, Integration, API, Parity)
+        run: |
+          python -m pytest tests/ -v
 
-    # FIX: References the correct filename targets matching the root repository footprint
-    - name: Build UI Container
-      run: docker build -t pinnflow-ui -f Dockerfile.ui .
+      - name: Execute End-to-End Scientific Smoke Test
+        run: |
+          python scripts/smoke_test.py
+
+  frontend-validation:
+    name: React Scientific Instrument UI Tests & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run ESLint
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Build React Production Bundle
+        run: |
+          cd frontend
+          npm run build
+
+  container-builds:
+    name: Production Docker Builds & Container Smoke Test
+    runs-on: ubuntu-latest
+    needs: [scientific-python-tests, frontend-validation]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build API Container
+        run: |
+          docker build -t pinnflow-api -f Dockerfile.api .
+
+      - name: Build UI Container
+        run: |
+          docker build -t pinnflow-ui -f Dockerfile.ui .

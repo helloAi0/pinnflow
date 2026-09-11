@@ -1,0 +1,35 @@
+# Full multi-seed benchmark matrix configuration
+benchmark_name: "pinnflow_scientific_benchmark"
+
+matrices:
+  models:
+    - "baseline_mlp"
+    - "static_pinn"
+    - "adaptive_pinn"
+    - "contemporary_gradient_weighted"
+    - "adaptive_sampling_pinn"
+    - "fourier_pinn"
+    - "hard_constrained_pinn"
+
+  seeds: [0, 1, 2, 3, 4]
+  
+  budgets: [500, 1000, 2500, 5000, 10000]
+  
+  noise_levels: [0.0, 0.01, 0.05, 0.10, 0.20]
+  
+  split_protocols:
+    - "random_point_split"
+    - "sensor_location_split"
+    - "temporal_holdout_split"
+
+defaults:
+  collocation_points: 10000
+  adam_epochs: 1000
+  lbfgs_epochs: 20
+  learning_rate: 0.001
+  hidden_layers: 6
+  hidden_dim: 128
+  activation: "tanh"
+  device: "auto"
+
+output_dir: "results/benchmark_matrix"

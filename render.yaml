@@ -1,42 +1,28 @@
 services:
-  # ==========================================
-  # 1. The Scientific FastAPI Backend Service
-  # ==========================================
   - type: web
     name: pinnflow-api
-    runtime: docker
-    dockerfilePath: ./Dockerfile.api
-    plan: free
-    healthCheckPath: /health
+    env: python
+    buildCommand: "pip install -r requirements.txt && pip install -e ."
+    startCommand: "uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.11
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: PINNFLOW_CHECKPOINT
+        value: "final_pinn_model.pth"
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
 
-  # ==========================================
-  # 2. The React Vite Tailwind Web Dashboard
-  # ==========================================
   - type: web
     name: pinnflow-frontend
-    # FIX: Switched from 'env: static' to modern 'runtime: static' parameter
-    runtime: static
-    buildCommand: cd frontend && npm install && npm run build
+    env: static
+    buildCommand: "cd frontend && npm ci && npm run build"
     staticPublishPath: ./frontend/dist
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: pinnflow-api
-          envVarKey: RENDER_EXTERNAL_URL
+        value: "https://pinnflow-api.onrender.com"
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
-
-  # ==========================================
-  # 3. The Streamlit Interactive UI (Legacy)
-  # ==========================================
-  - type: web
-    name: pinnflow-ui
-    runtime: docker
-    dockerfilePath: ./Dockerfile.ui
-    plan: starter 
-    envVars:
-      - key: API_URL
-        value: http://pinnflow-api:8000/predict/field

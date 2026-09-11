@@ -1,19 +1,20 @@
-FROM python:3.10-slim
+# Stage 1: Build React static assets
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY frontend/package*.json ./
+RUN npm ci
 
-COPY src/ui/ /app/src/ui/
+COPY frontend/ ./
+RUN npm run build
 
-# FIX: Wildcard bracket notation prevents build failure if weights are absent in CI
-COPY final_pinn_model.pt[h] /app/
+# Stage 2: Serve via Nginx
+FROM nginx:alpine
 
-# FIX: Pre-create datasets folder and safely copy contents if they exist
-RUN mkdir -p /app/datasets
-COPY datasets/ /app/datasets/
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-EXPOSE 8501
+# Expose standard port 80 / 8501
+EXPOSE 80
 
-CMD ["streamlit", "run", "src/ui/comparison.py", "--server.address=0.0.0.0"]
+CMD ["nginx", "-g", "daemon off;"]

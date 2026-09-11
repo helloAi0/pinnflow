@@ -1,174 +1,256 @@
-import React, { useState } from 'react'
+import React from 'react'
+import { Play, Sliders, RefreshCw, Download } from 'lucide-react'
 import type { FieldRequest } from '../types/api'
-import { AlertCircle, ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react'
 
 interface QueryControlsProps {
   params: FieldRequest
   setParams: React.Dispatch<React.SetStateAction<FieldRequest>>
+  selectedModel: string
+  setSelectedModel: (m: string) => void
+  selectedBudget: number
+  setSelectedBudget: (b: number) => void
+  selectedNoise: number
+  setSelectedNoise: (n: number) => void
+  selectedSplit: string
+  setSelectedSplit: (s: string) => void
+  selectedSeed: number
+  setSelectedSeed: (s: number) => void
   onEvaluate: () => void
   isLoading: boolean
   error: string | null
+  compareMode: boolean
+  setCompareMode: (c: boolean) => void
+  onExportField: () => void
+  onExportMetrics: () => void
 }
 
 export const QueryControls: React.FC<QueryControlsProps> = ({
   params,
   setParams,
+  selectedModel,
+  setSelectedModel,
+  selectedBudget,
+  setSelectedBudget,
+  selectedNoise,
+  setSelectedNoise,
+  selectedSplit,
+  setSelectedSplit,
+  selectedSeed,
+  setSelectedSeed,
   onEvaluate,
   isLoading,
   error,
+  compareMode,
+  setCompareMode,
+  onExportField,
+  onExportMetrics
 }) => {
-  const [showAdvanced, setShowAdvanced] = useState(false)
-
   return (
-    <div className="flex flex-col space-y-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-lg">
-      <div className="border-b border-[var(--border)] pb-3">
-        <h2 className="text-sm font-semibold tracking-wide uppercase text-[var(--foreground)]">
-          Query Controls
-        </h2>
-        <p className="text-xs text-[var(--muted-foreground)]">
-          Configure spatiotemporal domain parameters
-        </p>
+    <div className="flex flex-col space-y-5 rounded-xl border border-slate-800 bg-slate-900/70 p-5 backdrop-blur-md shadow-xl">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="flex items-center space-x-2 text-sm font-semibold text-slate-200">
+          <Sliders className="h-4 w-4 text-cyan-400" />
+          <span>Experiment Controls</span>
+        </div>
+        <span className="text-[11px] font-mono text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
+          Re = 100.0
+        </span>
       </div>
 
-      {/* Time Slider */}
-      <div className="space-y-2">
-        <div className="flex justify-between text-xs font-mono">
-          <span className="text-[var(--muted-foreground)]">Time Snapshot (t)</span>
-          <span className="font-bold text-[var(--color-primary)]">{params.t.toFixed(1)}s</span>
+      {error && (
+        <div className="rounded-lg border border-red-900/60 bg-red-950/40 p-3 text-xs text-red-300">
+          <span className="font-semibold text-red-400">Error:</span> {error}
+        </div>
+      )}
+
+      {/* Model Selection */}
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-slate-300">Surrogate Model Architecture</label>
+        <select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+        >
+          <option value="hard_constrained_pinn">Fourier Hard-Constrained PINN (Canonical Production)</option>
+          <option value="fourier_pinn">Fourier Feature PINN (Tancik / Wang 2021)</option>
+          <option value="adaptive_pinn">Homoscedastic Adaptive PINN (Kendall 2018)</option>
+          <option value="static_pinn">Standard Static PINN (Raissi 2019)</option>
+          <option value="baseline_mlp">Data-Only MLP Baseline (No Physics)</option>
+        </select>
+      </div>
+
+      {/* Observation Budget & Noise */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-300">Observation Budget</label>
+          <select
+            value={selectedBudget}
+            onChange={(e) => setSelectedBudget(Number(e.target.value))}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+          >
+            <option value={500}>500 points (Extreme Scarcity)</option>
+            <option value={1000}>1,000 points</option>
+            <option value={2500}>2,500 points</option>
+            <option value={5000}>5,000 points (Standard)</option>
+            <option value={10000}>10,000 points</option>
+          </select>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-300">Observation Noise</label>
+          <select
+            value={selectedNoise}
+            onChange={(e) => setSelectedNoise(Number(e.target.value))}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+          >
+            <option value={0.0}>0% (Clean DNS)</option>
+            <option value={0.01}>1% Gaussian Noise</option>
+            <option value={0.05}>5% Gaussian Noise</option>
+            <option value={0.10}>10% Gaussian Noise</option>
+            <option value={0.20}>20% Extreme Noise</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Split Protocol & Seed */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-300">Evaluation Split</label>
+          <select
+            value={selectedSplit}
+            onChange={(e) => setSelectedSplit(e.target.value)}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+          >
+            <option value="random">Random Spatio-Temporal</option>
+            <option value="sensor">Unseen Sensor Locations</option>
+            <option value="temporal">Temporal Future Holdout</option>
+          </select>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-slate-300">Training Seed</label>
+          <select
+            value={selectedSeed}
+            onChange={(e) => setSelectedSeed(Number(e.target.value))}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none"
+          >
+            <option value={0}>Seed 0</option>
+            <option value={1}>Seed 1</option>
+            <option value={2}>Seed 2</option>
+            <option value={3}>Seed 3</option>
+            <option value={4}>Seed 4</option>
+            <option value={42}>Seed 42</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Temporal Snapshot Slider */}
+      <div className="space-y-2 rounded-lg bg-slate-950/60 p-3 border border-slate-800">
+        <div className="flex justify-between text-xs">
+          <span className="font-medium text-slate-300">Temporal Coordinate (t)</span>
+          <span className="font-mono text-cyan-400 font-semibold">{params.t.toFixed(1)} s</span>
         </div>
         <input
           type="range"
           min="0.0"
-          max="20.0"
-          step="0.2"
+          max="19.9"
+          step="0.1"
           value={params.t}
           onChange={(e) => setParams((prev) => ({ ...prev, t: parseFloat(e.target.value) }))}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[var(--slate-800)] accent-[var(--color-primary)]"
+          className="w-full accent-cyan-500 cursor-pointer"
         />
-        <div className="flex justify-between text-[10px] font-mono text-[var(--muted-foreground)]">
-          <span>0.0s</span>
-          <span>10.0s</span>
-          <span>20.0s</span>
+        <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+          <span>0.0s (Inlet)</span>
+          <span>10.0s (Vortex shedding)</span>
+          <span>19.9s (End)</span>
         </div>
       </div>
 
-      {/* Vorticity Toggle */}
-      <div className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--slate-950)] p-3">
-        <span className="text-xs font-medium text-[var(--foreground)]">Compute Vorticity Field</span>
-        <button
-          type="button"
-          onClick={() => setParams((prev) => ({ ...prev, compute_vorticity: !prev.compute_vorticity }))}
-          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-            params.compute_vorticity ? 'bg-[var(--color-primary)]' : 'bg-[var(--slate-800)]'
-          }`}
-        >
-          <span
-            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-              params.compute_vorticity ? 'translate-x-4.5' : 'translate-x-1'
-            }`}
+      {/* Resolution */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs text-slate-300">Grid nx (columns)</label>
+          <input
+            type="number"
+            min="10"
+            max="200"
+            value={params.nx}
+            onChange={(e) => setParams((prev) => ({ ...prev, nx: parseInt(e.target.value) || 100 }))}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200"
           />
-        </button>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs text-slate-300">Grid ny (rows)</label>
+          <input
+            type="number"
+            min="10"
+            max="200"
+            value={params.ny}
+            onChange={(e) => setParams((prev) => ({ ...prev, ny: parseInt(e.target.value) || 50 }))}
+            className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200"
+          />
+        </div>
       </div>
 
-      {/* Advanced Domain Bounds */}
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--slate-950)]">
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="flex w-full items-center justify-between p-3 text-xs font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-        >
-          <span>Domain Bounds & Resolution</span>
-          {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
+      {/* Toggles */}
+      <div className="flex flex-col space-y-2 pt-1 border-t border-slate-800">
+        <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={compareMode}
+            onChange={(e) => setCompareMode(e.target.checked)}
+            className="rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0"
+          />
+          <span>Compare against Reference DNS Ground Truth</span>
+        </label>
 
-        {showAdvanced && (
-          <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] p-3 text-xs">
-            <div>
-              <label className="text-[10px] font-mono text-[var(--muted-foreground)]">X Min / Max</label>
-              <div className="flex space-x-1 mt-1">
-                <input
-                  type="number"
-                  value={params.x_min}
-                  onChange={(e) => setParams((prev) => ({ ...prev, x_min: parseFloat(e.target.value) || 0 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-                <input
-                  type="number"
-                  value={params.x_max}
-                  onChange={(e) => setParams((prev) => ({ ...prev, x_max: parseFloat(e.target.value) || 0 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-mono text-[var(--muted-foreground)]">Y Min / Max</label>
-              <div className="flex space-x-1 mt-1">
-                <input
-                  type="number"
-                  value={params.y_min}
-                  onChange={(e) => setParams((prev) => ({ ...prev, y_min: parseFloat(e.target.value) || 0 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-                <input
-                  type="number"
-                  value={params.y_max}
-                  onChange={(e) => setParams((prev) => ({ ...prev, y_max: parseFloat(e.target.value) || 0 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-              </div>
-            </div>
-            <div className="col-span-2">
-              <label className="text-[10px] font-mono text-[var(--muted-foreground)]">Grid Resolution (NX × NY)</label>
-              <div className="flex space-x-1 mt-1">
-                <input
-                  type="number"
-                  value={params.nx}
-                  onChange={(e) => setParams((prev) => ({ ...prev, nx: parseInt(e.target.value) || 10 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-                <input
-                  type="number"
-                  value={params.ny}
-                  onChange={(e) => setParams((prev) => ({ ...prev, ny: parseInt(e.target.value) || 10 }))}
-                  className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-mono text-xs text-[var(--foreground)]"
-                />
-              </div>
-            </div>
-          </div>
-        )}
+        <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={params.compute_vorticity}
+            onChange={(e) => setParams((prev) => ({ ...prev, compute_vorticity: e.target.checked }))}
+            className="rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-0"
+          />
+          <span>Compute Exact Autograd Vorticity (ω)</span>
+        </label>
       </div>
 
-      {/* Evaluate Button */}
+      {/* Action Button */}
       <button
-        type="button"
         onClick={onEvaluate}
         disabled={isLoading}
-        className={`flex w-full items-center justify-center space-x-2 rounded-lg py-2.5 px-4 font-semibold text-xs transition-all shadow-md ${
-          isLoading
-            ? 'bg-[var(--slate-800)] text-[var(--muted-foreground)] cursor-not-allowed'
-            : 'bg-[var(--color-primary)] text-white hover:bg-[var(--blue-600)] active:scale-[0.99]'
-        }`}
+        className="flex w-full items-center justify-center space-x-2 rounded-lg bg-cyan-600 px-4 py-2.5 text-xs font-semibold text-white transition-all hover:bg-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-900/30"
       >
         {isLoading ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin text-[var(--color-primary)]" />
-            <span>Evaluating network forward pass...</span>
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            <span>Evaluating Autograd Navier-Stokes...</span>
           </>
         ) : (
           <>
-            <Play className="h-4 w-4 fill-current" />
-            <span>Evaluate Flow Field</span>
+            <Play className="h-4 w-4" />
+            <span>Evaluate Physical Field</span>
           </>
         )}
       </button>
 
-      {/* Error Alert State */}
-      {error && (
-        <div className="flex items-start space-x-2.5 rounded-lg border border-red-900/50 bg-red-950/30 p-3 text-red-400">
-          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-          <p className="text-xs font-mono leading-tight">{error}</p>
-        </div>
-      )}
+      {/* Export tools */}
+      <div className="flex gap-2 pt-2 border-t border-slate-800">
+        <button
+          onClick={onExportField}
+          className="flex-1 flex items-center justify-center space-x-1.5 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800 transition"
+        >
+          <Download className="h-3.5 w-3.5 text-cyan-400" />
+          <span>Export Field CSV</span>
+        </button>
+        <button
+          onClick={onExportMetrics}
+          className="flex-1 flex items-center justify-center space-x-1.5 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-300 hover:bg-slate-800 transition"
+        >
+          <Download className="h-3.5 w-3.5 text-cyan-400" />
+          <span>Export Metrics JSON</span>
+        </button>
+      </div>
     </div>
   )
 }

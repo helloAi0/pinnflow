@@ -2,16 +2,33 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt pyproject.toml /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application modules
+# Copy application source code
 COPY src/ /app/src/
+COPY configs/ /app/configs/
+COPY datasets/ /app/datasets/
 
-# FIX: Wildcard bracket notation prevents build failure if weights are absent in CI
+# Ensure datasets directory and model weights are accessible
 COPY final_pinn_model.pt[h] /app/
+COPY artifacts/ /app/artifacts/
+
+# Set Python path
+ENV PYTHONPATH=/app
+ENV PINNFLOW_CHECKPOINT=/app/final_pinn_model.pth
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

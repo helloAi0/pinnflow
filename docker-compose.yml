@@ -7,18 +7,19 @@ services:
       dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
-    # FIX: Mount the whole app directory rather than a specific missing file 
-    # to prevent Docker from creating fake directories on your host machine.
-    volumes:
-      - .:/app
-    
+    environment:
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:80,http://localhost:3000
+      - PINNFLOW_CHECKPOINT=/app/final_pinn_model.pth
+    restart: unless-stopped
+
   ui:
     build:
       context: .
       dockerfile: Dockerfile.ui
     ports:
-      - "8501:8501"
-    volumes:
-      - .:/app
+      - "3000:80"
+    environment:
+      - VITE_API_URL=http://localhost:8000
     depends_on:
       - api
+    restart: unless-stopped

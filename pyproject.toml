@@ -4,25 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinnflow"
-version = "0.1.0"
-description = "Physics-Informed Neural Networks for Unsteady Flow Reconstruction"
+version = "2.0.0"
+description = "Physics-Informed Neural Networks for Unsteady 2D Flow Reconstruction"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
     "matplotlib>=3.7.0",
-    "pyvista>=0.40.0",      # For VTK/ParaView export
-    "pyyaml>=6.0",          # For configuration management
+    "pyyaml>=6.0",
     "h5py>=3.8.0",
-    "scikit-learn>=1.2.0",
-    "fastapi>=0.100.0",     # Backend API
+    "fastapi>=0.100.0",
     "uvicorn>=0.23.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.24.0",
     "pytest>=7.4.0"
 ]
 
 [project.optional-dependencies]
-dev = ["black", "flake8", "isort", "jupyter"]
+dev = ["black", "flake8", "isort", "onnxruntime", "onnx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

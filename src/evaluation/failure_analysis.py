@@ -1,148 +1,95 @@
 import os
-import torch
-import numpy as np
-import h5py
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import json
-from pathlib import Path
+import numpy as np
+import torch
+from typing import Dict, Any, Optional
+from src.config.physics_config import PhysicsConfig, DEFAULT_PHYSICS_CONFIG
 
-from src.models.mlp import NavierStokesMLP
+def generate_spatial_error_map(
+    model: torch.nn.Module,
+    X_star: np.ndarray,
+    U_star: np.ndarray,
+    p_star: np.ndarray,
+    time_val: float = 10.0,
+    save_path: str = "paper/figures/figure_spatial_error_map.png",
+    physics_config: PhysicsConfig = DEFAULT_PHYSICS_CONFIG
+) -> Dict[str, float]:
+    """
+    Generates a spatial absolute error heatmap at a given time snapshot.
+    Saves publication-quality figure.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+    model.eval()
 
-class PINNFailureAnalyzer:
-    def __init__(self, model_path="final_pinn_model.pth", data_path="datasets/raissi_cylinder/reference_cylinder.h5"):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = NavierStokesMLP().to(self.device)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-        self.model.eval()
-        
-        self.data_path = data_path
-        self.output_dir = Path("results/failure_analysis")
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    num_spatial = X_star.shape[0]
+    t_col = np.full((num_spatial, 1), time_val, dtype=np.float32)
+    query_coords = np.hstack([X_star, t_col])
+    
+    with torch.no_grad():
+        coords_t = torch.from_numpy(query_coords).float()
+        preds = model(coords_t).cpu().numpy()
 
-    def load_reference_data(self):
-        """Loads reference data and normalizes spatial/temporal array shapes."""
-        with h5py.File(self.data_path, 'r') as f:
-            self.x = np.squeeze(f['x'][:])
-            self.y = np.squeeze(f['y'][:])
-            self.t = np.squeeze(f['t'][:])
-            self.u_ref = np.squeeze(f['u'][:])
-            self.v_ref = np.squeeze(f['v'][:])
-            self.p_ref = np.squeeze(f['p'][:])
+    u_pred = preds[:, 0]
+    v_pred = preds[:, 1]
+    p_pred = preds[:, 2]
 
-        # Ensure u_ref is shaped (num_times, num_points)
-        num_times = len(self.t)
-        if self.u_ref.shape[0] != num_times and self.u_ref.shape[-1] == num_times:
-            self.u_ref = np.swapaxes(self.u_ref, 0, -1)
-            self.v_ref = np.swapaxes(self.v_ref, 0, -1)
-            self.p_ref = np.swapaxes(self.p_ref, 0, -1)
+    # Find closest time snapshot index
+    t_idx = int(np.clip(int(time_val / 0.1), 0, U_star.shape[2] - 1))
+    u_true = U_star[:, 0, t_idx]
+    v_true = U_star[:, 1, t_idx]
+    p_true = p_star[:, t_idx]
 
-    def _get_spatial_coords(self):
-        """Generates flattened coordinate arrays depending on whether x, y are 1D lists or 1D grid axes."""
-        num_pts = self.u_ref.shape[1]
-        
-        if len(self.x) == num_pts and len(self.y) == num_pts:
-            return self.x.flatten(), self.y.flatten()
-        else:
-            X, Y = np.meshgrid(self.x, self.y)
-            return X.flatten(), Y.flatten()
+    err_u = np.abs(u_pred - u_true)
+    err_v = np.abs(v_pred - v_true)
+    err_vel = np.sqrt(err_u ** 2 + err_v ** 2)
+    err_p = np.abs(p_pred - p_true)
 
-    def analyze_wake_and_boundary_errors(self, time_idx=-1):
-        """Investigates boundary error (cylinder wall) and wake-region error."""
-        x_flat, y_flat = self._get_spatial_coords()
-        t_val = self.t[time_idx]
-        t_flat = np.full_like(x_flat, t_val)
-        
-        coords = np.stack([x_flat, y_flat, t_flat], axis=1)
-        coords_tensor = torch.tensor(coords, dtype=torch.float32).to(self.device)
-        
-        with torch.no_grad():
-            preds = self.model(coords_tensor).cpu().numpy()
-            
-        u_pred = preds[:, 0]
-        u_true = self.u_ref[time_idx].flatten()
-        
-        error_u = np.abs(u_pred - u_true)
-        
-        # 1. Boundary Error Mask (r near 0.5)
-        radii = np.sqrt(x_flat**2 + y_flat**2)
-        boundary_mask = (radii > 0.45) & (radii < 0.55)
-        boundary_error = float(np.mean(error_u[boundary_mask])) if np.any(boundary_mask) else 0.0
-        
-        # 2. Wake-Region Error Mask (Downstream x > 1.0, |y| < 2.0)
-        wake_mask = (x_flat > 1.0) & (np.abs(y_flat) < 2.0)
-        wake_error = float(np.mean(error_u[wake_mask])) if np.any(wake_mask) else 0.0
-        
-        # 3. Global Error
-        global_error = float(np.mean(error_u))
-        
-        return {
-            "global_mae": global_error,
-            "boundary_layer_mae": boundary_error,
-            "wake_region_mae": wake_error,
-            "wake_to_global_ratio": wake_error / global_error if global_error > 0 else 0
-        }
+    # Wake partition: near-cylinder (x < 3.0) vs far wake (x >= 3.0)
+    near_cyl_mask = (X_star[:, 0] < 3.0)
+    far_wake_mask = (X_star[:, 0] >= 3.0)
 
-    def analyze_pressure_drift(self):
-        """Investigates temporal pressure drift due to unconstrained pressure gauges."""
-        mean_pressures_pred = []
-        mean_pressures_true = []
-        
-        x_flat, y_flat = self._get_spatial_coords()
-        
-        for i, t_val in enumerate(self.t):
-            t_flat = np.full_like(x_flat, t_val)
-            coords = np.stack([x_flat, y_flat, t_flat], axis=1)
-            coords_tensor = torch.tensor(coords, dtype=torch.float32).to(self.device)
-            
-            with torch.no_grad():
-                preds = self.model(coords_tensor).cpu().numpy()
-            
-            p_pred = preds[:, 2]
-            p_true = self.p_ref[i].flatten()
-            
-            mean_pressures_pred.append(np.mean(p_pred))
-            mean_pressures_true.append(np.mean(p_true))
-            
-        plt.figure(figsize=(10, 5))
-        plt.plot(self.t, mean_pressures_pred, label="PINN Mean Pressure (Drift)", color='red')
-        plt.plot(self.t, mean_pressures_true, label="Reference Mean Pressure", color='black', linestyle='--')
-        plt.xlabel("Time (t)")
-        plt.ylabel("Mean Spatial Pressure")
-        plt.title("Failure Analysis: Temporal Pressure Drift")
-        plt.legend()
-        plt.grid(True)
-        
-        plot_path = self.output_dir / "pressure_drift_analysis.png"
-        plt.savefig(plot_path)
-        plt.close()
-        
-        drift_variance = float(np.var(np.array(mean_pressures_pred) - np.array(mean_pressures_true)))
-        return {"pressure_drift_variance": drift_variance}
+    near_cyl_vel_err = float(np.mean(err_vel[near_cyl_mask]))
+    far_wake_vel_err = float(np.mean(err_vel[far_wake_mask]))
+    mean_vel_err = float(np.mean(err_vel))
 
-    def run_full_analysis(self):
-        """Executes all failure mode diagnostics and saves a report."""
-        print("Starting PINN Failure Analysis...")
-        self.load_reference_data()
-        
-        report = {}
-        
-        print("1. Analyzing Spatial Error Distributions (Wake & Boundary)...")
-        spatial_metrics = self.analyze_wake_and_boundary_errors()
-        report.update(spatial_metrics)
-        
-        print("2. Analyzing Temporal Pressure Drift...")
-        pressure_metrics = self.analyze_pressure_drift()
-        report.update(pressure_metrics)
-        
-        report_path = self.output_dir / "failure_report.json"
-        with open(report_path, "w") as f:
-            json.dump(report, f, indent=4)
-            
-        print(f"Analysis complete. Report saved to {report_path}")
-        print("\n--- Failure Analysis Summary ---")
-        for key, value in report.items():
-            print(f"{key}: {value:.6f}")
+    # Matplotlib publication-quality plot
+    fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    
+    # 1. True Velocity Magnitude
+    vel_true_mag = np.sqrt(u_true**2 + v_true**2)
+    sc0 = axes[0].scatter(X_star[:, 0], X_star[:, 1], c=vel_true_mag, cmap="viridis", s=6, vmin=0, vmax=1.5)
+    axes[0].set_title(r"Reference DNS Velocity Magnitude $|\mathbf{u}_{DNS}|$ ($t = " + f"{time_val:.1f}" + r"$)")
+    axes[0].set_ylabel("y")
+    plt.colorbar(sc0, ax=axes[0], label=r"$|\mathbf{u}|$")
 
-if __name__ == "__main__":
-    analyzer = PINNFailureAnalyzer()
-    analyzer.run_full_analysis()
+    # 2. Predicted Velocity Magnitude
+    vel_pred_mag = np.sqrt(u_pred**2 + v_pred**2)
+    sc1 = axes[1].scatter(X_star[:, 0], X_star[:, 1], c=vel_pred_mag, cmap="viridis", s=6, vmin=0, vmax=1.5)
+    axes[1].set_title(r"PINN Predicted Velocity Magnitude $|\hat{\mathbf{u}}|$")
+    axes[1].set_ylabel("y")
+    plt.colorbar(sc1, ax=axes[1], label=r"$|\hat{\mathbf{u}}|$")
+
+    # 3. Absolute Pointwise Error
+    sc2 = axes[2].scatter(X_star[:, 0], X_star[:, 1], c=err_vel, cmap="inferno", s=6)
+    axes[2].set_title(r"Pointwise Velocity Error $|\hat{\mathbf{u}} - \mathbf{u}_{DNS}|$")
+    axes[2].set_xlabel("x")
+    axes[2].set_ylabel("y")
+    plt.colorbar(sc2, ax=axes[2], label="Error")
+
+    for ax in axes:
+        ax.set_aspect("equal")
+        ax.set_xlim(physics_config.x_min, physics_config.x_max)
+        ax.set_ylim(physics_config.y_min, physics_config.y_max)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+    return {
+        "mean_velocity_error": mean_vel_err,
+        "near_cylinder_error": near_cyl_vel_err,
+        "far_wake_error": far_wake_vel_err,
+        "figure_saved": save_path
+    }

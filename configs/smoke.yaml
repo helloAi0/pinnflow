@@ -1,0 +1,33 @@
+# Smoke test configuration for fast CI/unit verification
+experiment_name: "smoke_test"
+model:
+  architecture: "standard_mlp"
+  in_dim: 3
+  out_dim: 3
+  hidden_layers: 4
+  hidden_dim: 32
+  activation: "tanh"
+
+training:
+  budget: 200
+  noise_level: 0.0
+  split_protocol: "random"
+  val_ratio: 0.1
+  test_ratio: 0.2
+  collocation_points: 500
+  adam_epochs: 10
+  lbfgs_epochs: 0
+  learning_rate: 0.001
+  batch_size: 200
+  seed: 42
+  device: "cpu"
+
+loss:
+  strategy: "static"
+  weight_data: 1.0
+  weight_pde: 1.0
+  weight_bc: 0.0
+  weight_gauge: 0.0
+
+output:
+  output_dir: "results/smoke"
