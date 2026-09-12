@@ -1,37 +1,45 @@
 <div align="center">
+  <img src="assets/pinnflow-banner.svg" alt="PinnFlow" width="100%">
+</div>
 
-<a href="https://github.com/helloAi0/pinnflow">
-  <img src="assets/pinnflow-banner.gif" alt="PINNFlow — Physics-Informed Flow Reconstruction" width="100%" />
-</a>
+<div align="center">
 
-PINNFlow
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg?logo=pytorch)](https://pytorch.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-served-009688.svg?logo=fastapi)](src/api/main.py)
+[![React](https://img.shields.io/badge/React-Vite%20%2B%20Tailwind%20v4-61DAFB.svg?logo=react)](frontend)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/helloAi0/pinnflow/ci.yml?branch=main)](../../actions)
 
-Physics-Informed Reconstruction of Unsteady 2D Incompressible Flow from Sparse and Noisy Observations
+**Physics-informed reconstruction of unsteady incompressible flow from sparse and noisy observations.**
 
-<p>
-  <a href="https://github.com/helloAi0/pinnflow/actions"><img src="https://img.shields.io/github/actions/workflow/status/helloAi0/pinnflow/ci.yml?branch=main&label=CI&logo=github" alt="CI"/></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python"/></a>
-  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch"/></a>
-  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" alt="FastAPI"/></a>
-  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-Scientific%20Console-61DAFB?logo=react&logoColor=111827" alt="React"/></a>
-  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-Reproducible-2496ED?logo=docker&logoColor=white" alt="Docker"/></a>
-  <img src="https://img.shields.io/badge/Domain-Scientific%20ML-7C3AED" alt="Scientific ML"/>
-  <img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"/>
-</p>
-
-PINNFlow is a research and deployment framework for studying how physics constraints, adaptive loss balancing, and observation design affect neural reconstruction of unsteady incompressible flow.
+[Research Question](#research-question) • [Problem](#problem) • [Architecture](#system-architecture) • [Quickstart](#local-development) • [API](#api) • [Claims Registry](#scientific-validation) • [Limitations](#limitations)
 
 </div>
 
-Research Question
+---
 
-Under sparse and noisy observations of an unsteady cylinder wake, which combination of physics constraints, adaptive loss balancing, and sampling strategy provides the best accuracy–data-efficiency–robustness trade-off?
+PinnFlow is a reproducible scientific-computing framework for investigating Physics-Informed Neural Networks (PINNs) for spatiotemporal reconstruction of 2D incompressible Navier–Stokes flows.
 
-PINNFlow investigates this question through controlled observation budgets, reproducible random seeds, explicit evaluation splits, multi-model baselines, and scientific error metrics.
+The project combines a physics-based neural solver with a controlled experimental framework for studying the effects of observation sparsity, measurement noise, loss balancing, and sampling strategy.
 
-Problem
+> **Research status:** research prototype / experimental platform. Benchmark results are generated from the reproducible experiment pipeline and are not hard-coded into this repository — the [Results](#scientific-metrics) table ships empty until real multi-seed runs populate it. See [`CLAIMS.md`](CLAIMS.md) for exactly which claims below are `IMPLEMENTED`, `TESTED`, `EXPERIMENTALLY VERIFIED`, or `NOT YET DEMONSTRATED`, and [Test status](#testing) for the current, honest state of the automated suite.
 
-For a dimensionless 2D incompressible flow,
+---
+
+## Research Question
+
+The central research question is:
+
+> **Under sparse and noisy observations of an unsteady cylinder wake, which combination of physics constraints, adaptive loss balancing, and sampling strategy provides the best accuracy–data-efficiency–robustness trade-off?**
+
+PinnFlow evaluates this question using controlled observation budgets, reproducible random seeds, explicit evaluation splits, and multiple scientific error metrics.
+
+---
+
+## Problem
+
+For an unsteady incompressible flow,
 
 $$
 u_t + uu_x + vu_y + p_x - \nu(u_{xx}+u_{yy}) = 0
@@ -45,534 +53,447 @@ $$
 u_x + v_y = 0.
 $$
 
-PINNFlow represents the continuous flow field as
+PinnFlow represents the velocity and pressure fields with a neural function
 
 $$
 (u,v,p)=f_\theta(x,y,t)
 $$
 
-and uses automatic differentiation to evaluate first- and second-order derivatives directly inside the physics-informed objective.
+and uses automatic differentiation to evaluate the governing-equation residuals directly during training.
 
-The primary benchmark is the two-dimensional cylinder wake at Re = 100.
+The primary benchmark is the two-dimensional cylinder wake at Reynolds number $Re=100$ — the same regime the banner above animates: alternating vortex shedding behind a bluff body, the flow structure this whole framework exists to reconstruct from a handful of sparse sensors.
 
-Why PINNFlow?
+---
 
-PINNFlow is intentionally structured as a reproducible research platform, not a single training notebook.
+## Contributions
 
-Scientific layer
+PinnFlow is designed as a **reproducible research and deployment framework**, rather than a single training script.
 
-Sparse-observation reconstruction
+### Scientific contributions
 
-Explicit observation-noise injection
+* Controlled sparse-observation experiments.
+* Explicit observation-noise injection.
+* Comparison of data-only and physics-informed models.
+* Adaptive loss-balancing experiments.
+* Spatial, temporal, and physics-consistency evaluation.
+* Failure-mode and error-field analysis.
+* Reproducible multi-seed benchmarking.
 
-Navier–Stokes residuals through automatic differentiation
+### Engineering contributions
 
-Boundary and pressure constraints
+* Modular PyTorch implementation.
+* Automatic-differentiation physics engine.
+* FastAPI inference service, versioned (`/api/v1/...`) with unversioned aliases kept for backward compatibility.
+* React + Tailwind scientific visualization console.
+* Docker-based deployment (API, React console, and a legacy Streamlit comparison dashboard as separate services — see `render.yaml`).
+* ONNX/TorchScript export.
+* Automated unit, scientific, integration, and API tests.
 
-Controlled data-efficiency studies
+---
 
-Sensor-location and temporal holdout evaluation
+## System Architecture
 
-Multi-seed statistical analysis
+```text
+                    Reference DNS
+                         │
+                 Observation Builder
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+         Sparse/noisy            Clean
+         observations           evaluation
+              │                     │
+              └──────────┬──────────┘
+                         │
+                    PINN Training
+                         │
+              ┌──────────┴──────────┐
+              │                     │
+          Data loss            Physics losses
+                                │
+                     continuity / momentum
+                                │
+                         Boundary constraints
+                                │
+                         Pressure gauge
+              └──────────┬──────────┘
+                         │
+                     Checkpoint
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+        Scientific Evaluation      Export
+             │                       │
+       Metrics / statistics       ONNX / Torch
+             │                       │
+             └──────────┬────────────┘
+                        │
+                  FastAPI Service
+                        │
+                  React Console
+```
 
-Failure-mode and error-field analysis
+---
 
-Engineering layer
+## Repository Structure
 
-Canonical PyTorch model factory
+```text
+src/
+├── api/             FastAPI service (versioned + legacy routes)
+├── config/          Central scientific configuration (single source of truth: Re, domain bounds, cylinder geometry)
+├── data/            Dataset ingestion and observation generation
+├── evaluation/      Metrics, statistics, and failure analysis
+├── experiments/     Benchmark and training orchestration
+├── export/          ONNX / TorchScript model export
+├── geometry/        Domain and cylinder geometry
+├── inference/       Canonical inference engine
+├── losses/          Data, physics, and boundary losses
+├── models/          Neural architectures + model factory
+├── physics/         Navier–Stokes residual engine
+├── sampling/        Collocation and adaptive sampling
+├── training/        Training loops
+└── visualization/   Scientific plotting
 
-Modular training and evaluation pipeline
+frontend/            React + Vite + Tailwind v4 scientific console
 
-FastAPI inference service
+configs/
+├── baseline_mlp.yaml
+├── static_pinn.yaml
+├── adaptive_pinn.yaml
+├── adaptive_sampling.yaml
+├── contemporary_baseline.yaml
+├── benchmark.yaml
+└── smoke.yaml
 
-React + TypeScript scientific console
+results/            Generated experiment artifacts (not committed — see Reproducibility)
 
-TorchScript / ONNX export
+tests/
+├── unit/
+├── integration/
+├── scientific/
+├── api/
+└── reproducibility/
 
-Dockerized services
+paper/
+├── manuscript.md
+└── figures/, tables/    (populate from results/ before submission — see Research Outputs)
 
-Automated unit, scientific, API, integration, and build checks
+CLAIMS.md            Scientific claims registry — every claim classified by evidence level
+CITATION.cff
+```
 
-Reproducible experiment artifacts
+---
 
-System Architecture
+## Experimental Design
 
-                         ┌──────────────────────┐
-                         │   Reference DNS/CFD  │
-                         └──────────┬───────────┘
-                                    │
-                           Observation Builder
-                                    │
-                    ┌───────────────┴───────────────┐
-                    │                               │
-             Sparse / noisy                    Clean reference
-             observations                       evaluation
-                    │                               │
-                    └───────────────┬───────────────┘
-                                    │
-                             ┌──────▼──────┐
-                             │ PINN Engine │
-                             └──────┬──────┘
-                                    │
-               ┌────────────────────┼────────────────────┐
-               │                    │                    │
-          Data objective      PDE objectives       BC / Gauge
-               │                    │                    │
-               └────────────────────┼────────────────────┘
-                                    │
-                              Verified Checkpoint
-                                    │
-                 ┌──────────────────┴──────────────────┐
-                 │                                     │
-        Scientific Evaluation                      Model Export
-                 │                                     │
-      ┌──────────┼───────────┐                  ONNX / TorchScript
-      │          │           │                        │
-   Metrics    Statistics   Failure Analysis            │
-      │          │           │                        │
-      └──────────┴───────────┘                        │
-                 │                                     │
-                 └──────────────────┬──────────────────┘
-                                    │
-                              FastAPI /api/v1
-                                    │
-                              React Console
-                                    │
-                        Research + Production UI
+PinnFlow evaluates the effect of observation availability and noise.
 
-Repository Structure
+### Observation budgets
 
-pinnflow/
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-│
-├── configs/                         # Reproducible experiment configurations
-│   ├── baseline_mlp.yaml
-│   ├── static_pinn.yaml
-│   ├── adaptive_pinn.yaml
-│   ├── adaptive_sampling.yaml
-│   ├── contemporary_baseline.yaml
-│   ├── benchmark.yaml
-│   └── smoke.yaml
-│
-├── datasets/                        # Prepared/reference datasets (not ad-hoc copies)
-│
-├── docs/
-│   ├── architecture.md
-│   ├── api.md
-│   ├── reproducibility.md
-│   └── scientific-methodology.md
-│
-├── frontend/                        # React + TypeScript scientific console
-│   ├── public/
-│   └── src/
-│       ├── components/
-│       ├── services/
-│       ├── types/
-│       └── ...
-│
-├── paper/
-│   ├── manuscript.md
-│   ├── figures/
-│   └── tables/
-│
-├── results/
-│   ├── raw/
-│   ├── processed/
-│   └── figures/
-│
-├── scripts/                         # Reproducibility / benchmark utilities
-│
-├── src/
-│   ├── api/                         # Versioned FastAPI service
-│   ├── config/                      # Authoritative scientific configuration
-│   ├── data/                        # Data loading / observation generation
-│   ├── evaluation/                  # Metrics, statistics, failure analysis
-│   ├── experiments/                 # Research experiment orchestration
-│   ├── export/                      # ONNX / TorchScript export
-│   ├── geometry/                    # Domain and cylinder geometry
-│   ├── inference/                   # Canonical inference path
-│   ├── losses/                      # Data / PDE / BC / gauge losses
-│   ├── models/                      # Canonical model + factory
-│   ├── physics/                     # Autograd derivatives / residuals
-│   ├── sampling/                    # Collocation / adaptive sampling
-│   ├── training/                    # Training loops
-│   ├── utils/                       # Reproducibility / utilities
-│   └── visualization/               # Scientific visualization
-│
-├── tests/
-│   ├── unit/
-│   ├── scientific/
-│   ├── integration/
-│   ├── api/
-│   └── reproducibility/
-│
-├── CLAIMS.md
-├── CITATION.cff
-├── CHANGELOG.md
-├── Dockerfile.api
-├── Dockerfile.ui
-├── Makefile
-├── README.md
-├── docker-compose.yml
-├── pyproject.toml
-└── requirements.txt
-
-Experimental Design
-
-PINNFlow evaluates the effect of observation availability and measurement noise.
-
-Observation budgets
-
+```text
 500
 1,000
 2,500
 5,000
 10,000
+```
 
-Noise levels
+### Noise levels
 
+```text
 0%
 1%
 5%
 10%
 20%
+```
 
-Random seeds
+### Random seeds
 
-Main experiments use multiple independent seeds to quantify training variability rather than relying on a single favorable run.
+Main experiments use multiple independent seeds to quantify training variability — see `configs/benchmark.yaml` and `scripts/benchmark_multi_seed.py`.
 
-Evaluation splits
+### Evaluation splits
 
-PINNFlow distinguishes:
+PinnFlow distinguishes:
 
-Random point holdout
+1. Random point holdout.
+2. Unseen sensor-location holdout.
+3. Unseen temporal-window holdout.
 
-Unseen sensor-location holdout
+The latter two are emphasized when measuring true reconstruction generalization, rather than interpolation within an already-seen sensor layout.
 
-Unseen temporal-window holdout
+---
 
-The latter two are emphasized when evaluating true reconstruction generalization.
+## Models
 
-Models
+### Data-only baseline
+A standard neural surrogate trained only from observations.
 
-Data-only baseline
+### Static PINN
+A PINN with fixed weighting between data and physics objectives.
 
-A neural surrogate trained only on observations.
+### Adaptive PINN
+A PINN with learnable (homoscedastic-uncertainty) loss weighting.
 
-Static PINN
+### Fourier-constrained PINN
+Fourier-feature input embedding to mitigate spectral bias against the wake's shedding frequency, plus a hard boundary-distance constraint enforcing exact no-slip on the cylinder wall.
 
-A physics-informed model using fixed weights between data and physics objectives.
+### Additional research baselines
+The benchmark harness (`configs/contemporary_baseline.yaml`) can include contemporary gradient-based, NTK-inspired, or adaptive-sampling methods to determine whether improvements are specific to one weighting strategy or general.
 
-Adaptive PINN
+---
 
-A physics-informed model with learnable loss weighting.
-
-Additional research baselines
-
-The benchmark framework can incorporate contemporary:
-
-gradient-based weighting,
-
-NTK-inspired weighting,
-
-residual-aware sampling,
-
-adaptive sampling strategies.
-
-These are treated as experimental baselines rather than assumed improvements.
-
-Scientific Metrics
+## Scientific Metrics
 
 The evaluation suite reports:
 
-Relative $L_2$ velocity error
+* Relative $L_2$ error.
+* $L_\infty$ error.
+* Velocity error.
+* Pressure error.
+* Vorticity error.
+* Divergence / mass-balance error.
+* Individual PDE residuals.
+* Error versus time.
+* Error versus downstream distance.
+* Training time.
+* Inference latency.
+* Parameter count.
+* Memory usage.
 
-Relative $L_2$ component errors
+All aggregate benchmark results are generated from saved experiment artifacts rather than manually entered values — see `src/evaluation/`.
 
-$L_\infty$ error
+---
 
-Pressure error
+## Reproducibility
 
-Vorticity error
+Each experiment stores:
 
-Divergence / mass-balance error
-
-Individual PDE residuals
-
-Error versus time
-
-Error versus downstream distance
-
-Training wall time
-
-Inference latency
-
-Parameter count
-
-Memory usage where available
-
-Aggregate benchmark results are generated from saved experiment artifacts rather than manually entered values.
-
-Reproducibility
-
-Each experiment records:
-
+```text
 Experiment ID
 Git commit
 Model configuration
 Physics configuration
-Dataset identifier/version
+Dataset version
 Observation budget
 Noise level
-Evaluation split
 Random seed
 Python version
 PyTorch version
 Hardware
 Training configuration
 Checkpoint identifier
+```
 
-Reproduce an experiment
+To reproduce an experiment:
 
+```bash
 python -m src.experiments.benchmark \
     --config configs/benchmark.yaml \
     --seed 0
+```
 
-Generated outputs are stored under:
+Generated outputs are written under `results/raw/`, `results/processed/`, and `results/figures/` — this directory is intentionally not committed (it's regenerated output, not source), so a fresh clone won't contain it until you run an experiment.
 
-results/raw/
-results/processed/
-results/figures/
+---
 
-Scientific Validation
+## Scientific Validation
 
-The physics engine uses automatic differentiation for first- and second-order derivatives.
+The physics engine uses automatic differentiation for first- and second-order derivatives. Analytical derivative tests validate the differentiation engine against closed-form functions (Taylor–Green vortex).
 
-Scientific tests verify:
+Scientific tests (`tests/scientific/`) verify PDE residual construction, boundary constraints, pressure gauge behavior, divergence behavior, sampling geometry, reproducibility, and evaluation metrics.
 
-analytical derivative accuracy,
+See [`CLAIMS.md`](CLAIMS.md) for the full registry — it's the most honest single document in this repo, and worth reading before citing anything from it in a paper or application. It explicitly marks what's `STATISTICALLY SUPPORTED` (multi-seed, $p<0.05$) versus merely `IMPLEMENTED`, and documents at least one known limitation plainly (long-horizon temporal extrapolation beyond the training window is `NOT YET DEMONSTRATED`).
 
-PDE residual construction,
+---
 
-boundary constraints,
+## API
 
-pressure-gauge behavior,
+The FastAPI service exposes model inference and scientific diagnostics, with versioned routes (`/api/v1/...`) and unversioned aliases kept for backward compatibility.
 
-divergence behavior,
+### Health
 
-sampling geometry,
-
-evaluation metrics,
-
-reproducibility,
-
-API behavior.
-
-No scientific result is considered established merely because the corresponding code exists; it must be supported by executed experiments.
-
-API
-
-The production inference service is exposed through a versioned FastAPI API.
-
-Health
-
+```http
 GET /api/v1/health
+```
 
-Returns model readiness, checkpoint metadata, configuration, and dataset availability.
+Returns model readiness, checkpoint metadata, configuration, and dataset availability — the console's status indicator reads this directly rather than assuming the model loaded.
 
-Point prediction
+### Point prediction
 
+```http
 POST /api/v1/predict/point
+```
 
-Example:
+```json
+{ "x": 2.0, "y": 0.3, "t": 10.0, "compute_vorticity": true }
+```
 
-{
-  "x": 2.0,
-  "y": 0.3,
-  "t": 10.0,
-  "compute_vorticity": true
-}
+### Field prediction
 
-Field prediction
-
+```http
 POST /api/v1/predict/field
+```
 
-Example:
+```json
+{ "x_min": -1, "x_max": 8, "y_min": -2, "y_max": 2, "t": 10, "nx": 100, "ny": 100, "compute_vorticity": true }
+```
 
-{
-  "x_min": -1,
-  "x_max": 8,
-  "y_min": -2,
-  "y_max": 2,
-  "t": 10,
-  "nx": 100,
-  "ny": 100,
-  "compute_vorticity": true
-}
+### Reference field (real DNS data, for honest comparison)
 
-The production API must never perform inference using an unverified or uninitialized model.
+```http
+POST /api/v1/reference/field
+```
 
-Web Console
+Same shape as above. Interpolates the actual measurement points onto the requested grid; returns `503` (not a fabricated substitute) if the reference dataset hasn't been fetched on the server.
 
-The React scientific console provides:
+The API never performs inference using an unverified or uninitialized model without saying so — `weights_loaded` and `checkpoint` in `/health` reflect what's actually running.
 
-field visualization,
+---
 
-reference comparison,
+## Web Console
 
-absolute-error maps,
+The React application (`frontend/`) provides a scientific evaluation console with field visualization, reference comparison, absolute-error maps, PDE residual maps, vorticity, benchmark metrics, inference latency, model/checkpoint metadata, and experiment reproducibility information.
 
-PDE residual maps,
+---
 
-vorticity,
+## Local Development
 
-benchmark metrics,
+### Python
 
-inference latency,
-
-model/checkpoint metadata,
-
-experiment reproducibility information,
-
-exportable field and metric data.
-
-Local Development
-
-Environment
-
+```bash
 python -m venv .venv
-
-Linux/macOS:
-
 source .venv/bin/activate
-
-Windows:
-
-.venv\Scripts\activate
-
-Install:
-
 pip install -r requirements.txt
-pip install -e .
+```
 
-Dataset preparation
+### Dataset preparation
 
+```bash
 python -m src.data.reference_pipeline
+```
 
-Training
+### Training
 
+```bash
 python -m src.experiments.train_final
+```
 
-Benchmarking
+### Benchmarking
 
+```bash
 python -m src.experiments.benchmark \
     --config configs/benchmark.yaml \
     --seed 0
+```
 
-API
+### API
 
+```bash
 uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
 
-Frontend
+### Frontend
 
+```bash
 cd frontend
 npm ci
 npm run dev
+```
 
-Testing
+---
 
-Python
+## Testing
 
+```bash
 pytest -q
+```
 
-Frontend
+**Current status on a clean clone: 35 of 38 tests pass.** The three failures are known and specific, not mysterious flakiness:
 
+| Test | Cause | Fix needed |
+|---|---|---|
+| `tests/integration/test_export_parity.py` | `onnxscript` isn't in `requirements.txt` | Add it as a dependency |
+| `tests/integration/test_training_pipeline.py` | Needs the real CFD dataset, no fallback/skip when absent | Add `@pytest.mark.skipif` or fetch the dataset in CI before running tests |
+| `tests/test_pinnflow.py::test_data_pipeline_dimensions` | Same — needs the dataset, no graceful skip | Same fix |
+
+None of these are correctness bugs in the physics or API — they're missing-dependency and missing-fixture gaps. Worth fixing before claiming a fully green suite in a paper or application, but not worth hiding.
+
+Frontend:
+
+```bash
 cd frontend
 npm ci
 npm run lint
 npm run build
+```
 
-CI is responsible for validating the real test suite, frontend build, API smoke tests, and container builds.
+CI (`.github/workflows/ci.yml`) runs the Python test suite, builds both Docker images, and builds + lints the frontend on every push — not just container builds, so a regression like the ones above shows up immediately rather than sitting on `main` unnoticed.
 
-Deployment
+---
 
-Production architecture:
+## Deployment
 
-React / Vercel
-       │
-       │ HTTPS
-       ▼
-FastAPI / Render
-       │
-       ▼
-Canonical inference engine
-       │
-       ▼
-Verified checkpoint
+The production architecture is:
 
-Docker images are built from reproducible runtime artifacts and do not rely on host bind mounts for production execution.
+```text
+React  →  FastAPI  →  Canonical model
+```
 
-Research Outputs
+`render.yaml` deploys this as a Blueprint: the API (Docker), the React console (static site build), and the legacy Streamlit comparison dashboard (Docker), with the console's API URL resolved automatically from the API service's own deployed URL rather than hardcoded.
+
+---
+
+## Limitations
+
+The primary benchmark is a 2D cylinder wake at $Re=100$.
+
+The results should therefore not be interpreted as evidence that one PINN strategy is universally superior for every PDE or flow regime.
+
+Future work includes:
+
+* multiple Reynolds numbers,
+* higher-dimensional geometries,
+* uncertainty quantification,
+* adaptive residual sampling,
+* experimental sensor placement,
+* real CFD/experimental datasets,
+* larger-scale GPU benchmarking,
+* consolidating the dataset ingestion path (`src/data/` vs. the API's direct `.mat` reader) into one pipeline.
+
+---
+
+## Research Outputs
 
 A paper-ready release should contain:
 
+```text
 paper/manuscript.md
 paper/figures/
 paper/tables/
 results/
 CITATION.cff
+```
 
-Every paper figure and table should be regenerable from repository scripts and saved experiment artifacts.
+Every figure and table must be regenerable from repository scripts — none should be hand-edited after generation. `CLAIMS.md` is the mechanism that keeps the manuscript honest: every empirical sentence in `paper/manuscript.md` should trace to a row in that registry.
 
-Limitations
+---
 
-The primary benchmark is a two-dimensional cylinder wake at Re = 100.
+## Citation
 
-Therefore, results should not be interpreted as evidence that a particular PINN strategy is universally superior across all PDEs, Reynolds-number regimes, geometries, or observation models.
-
-Current research directions include:
-
-multiple Reynolds numbers,
-
-higher-dimensional geometries,
-
-uncertainty quantification,
-
-adaptive residual sampling,
-
-experimental sensor placement,
-
-real CFD/experimental datasets,
-
-larger-scale GPU benchmarking.
-
-Research Status
-
-PINNFlow distinguishes between:
-
-IMPLEMENTED
-VALIDATED
-EXPERIMENTALLY VERIFIED
-STATISTICALLY SUPPORTED
-NOT YET DEMONSTRATED
-
-Scientific claims are documented separately in CLAIMS.md.
-
-Results must not be presented as established findings until they are supported by reproducible experiment artifacts.
-
-Citation
-
-@software{pinnflow2026,
-  title   = {PINNFlow: Physics-Informed Reconstruction of Unsteady Flow from Sparse and Noisy Observations},
+```bibtex
+@software{pinnflow,
   author  = {Taha},
+  title   = {PinnFlow: Physics-Informed Reconstruction of Unsteady Flow from Sparse and Noisy Observations},
   year    = {2026},
   url     = {https://github.com/helloAi0/pinnflow}
 }
+```
 
-License
+Also see [`CITATION.cff`](CITATION.cff) for machine-readable citation metadata.
 
-MIT License.
+---
 
-See LICENSE.
+## License
+
+MIT
