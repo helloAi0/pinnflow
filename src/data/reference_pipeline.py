@@ -1,3 +1,9 @@
+"""
+Ground truth evaluation and processing pipeline.
+Loads raw CFD data to establish domain boundaries and process true fields
+for inference-time L2 error evaluation. Assumes data is already downloaded.
+"""
+
 import logging
 import urllib.request
 from pathlib import Path

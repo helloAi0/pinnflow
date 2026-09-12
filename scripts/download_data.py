@@ -1,5 +1,12 @@
+"""
+Network utility script for raw dataset acquisition.
+Solely responsible for fetching the Raissi cylinder CFD .mat files
+and saving them locally. Contains no processing or ML abstractions.
+"""
+
 import urllib.request
 import os
+
 
 def download_real_cfd_data():
     # URL to the raw .mat file from the original PINNs repository

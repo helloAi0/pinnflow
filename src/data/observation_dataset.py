@@ -1,3 +1,9 @@
+"""
+PyTorch Dataset abstraction for PINNflow training.
+Generates flattened coordinate and field tensors, enforcing training budget
+downsampling and variance-scaled Gaussian noise injection.
+"""
+
 import os
 import hashlib
 import logging

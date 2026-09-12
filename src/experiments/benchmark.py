@@ -349,6 +349,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PINNFlow Scientific Benchmark Runner")
     parser.add_argument("--config", type=str, default="configs/smoke.yaml", help="Path to experiment YAML config")
     parser.add_argument("--matrix", action="store_true", help="Run full benchmark matrix across baseline suite")
+    parser.add_argument('--seed', type=int, default=0, help='Random seed for reproducibility')
     args = parser.parse_args()
 
     if args.matrix:
