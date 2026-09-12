@@ -1,6 +1,4 @@
-<div align="center">
-  <img src="assets/pinnflow-banner.svg" alt="PinnFlow" width="100%">
-</div>
+<div align="center"> <img src="assets/pinnflow-banner.gif" alt="PinnFlow" width="100%"> </div> <div align="center">
 
 <div align="center">
 
