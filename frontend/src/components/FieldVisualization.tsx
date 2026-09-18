@@ -409,9 +409,9 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
         )}
 
         {!data && !isLoading && (
-          <div className="flex flex-col items-center justify-center text-slate-500 space-y-2.5">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-500 space-y-2.5 text-center px-4 pointer-events-none">
             <Compass className="h-10 w-10 text-slate-600 animate-pulse" />
-            <p className="text-xs font-mono">Select parameters and click "Evaluate Physical Field"</p>
+            <p className="text-xs font-mono max-w-sm">Select parameters and click &quot;Evaluate Physical Field&quot;</p>
           </div>
         )}
 

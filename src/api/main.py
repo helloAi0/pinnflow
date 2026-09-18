@@ -36,13 +36,22 @@ PHYSICS_CONFIG = DEFAULT_PHYSICS_CONFIG
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Checkpoint candidate resolution
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENV_CKPT = os.getenv("PINNFLOW_CHECKPOINT")
-CANDIDATE_PATHS = [
+
+RAW_CKPT_CANDIDATES = [
     ENV_CKPT,
     "final_pinn_model.pth",
     "artifacts/fourier_constrained_seed8008.pth",
     "results/smoke/model_checkpoint.pth"
 ]
+
+CANDIDATE_PATHS = []
+for p in RAW_CKPT_CANDIDATES:
+    if p:
+        CANDIDATE_PATHS.append(p)
+        if not os.path.isabs(p):
+            CANDIDATE_PATHS.append(os.path.join(REPO_ROOT, p))
 
 # Global model state
 MODEL: Optional[torch.nn.Module] = None
@@ -82,10 +91,15 @@ if not CHECKPOINT_VALID or MODEL is None:
         logger.error(f"[-] Failed to instantiate fallback model: {e}", extra={"request_id": "startup"})
 
 # Reference CFD data caching
-DATA_CANDIDATES = [
+RAW_DATA_CANDIDATES = [
     "datasets/raissi_cylinder/cylinder_nektar_wake.mat",
     "data/cylinder_nektar_wake.mat"
 ]
+DATA_CANDIDATES = []
+for p in RAW_DATA_CANDIDATES:
+    DATA_CANDIDATES.append(p)
+    DATA_CANDIDATES.append(os.path.join(REPO_ROOT, p))
+
 DATA_PATH = next((p for p in DATA_CANDIDATES if os.path.exists(p) and os.path.getsize(p) > 1000000), None)
 
 CACHED_DNS: Optional[Dict[str, Any]] = None
