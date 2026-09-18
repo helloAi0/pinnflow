@@ -24,8 +24,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "numpy<2" onnx onnxruntime
+          pip install "numpy<2" onnx onnxruntime onnxscript
           pip install -e .
+
+      - name: Fetch reference CFD dataset
+        run: python scripts/download_data.py
 
       - name: Run Pytest Suite (Scientific, Unit, Integration, API, Parity)
         run: |
