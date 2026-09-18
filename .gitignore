@@ -27,8 +27,8 @@ results/
 runs/
 *.mat
 *.h5
-*.pt
-*.pth
+# *.pt
+# *.pth
 
 # ==========================================
 # 4. Frontend Asset Modules & Dist Bundles
