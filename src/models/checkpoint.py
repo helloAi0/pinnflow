@@ -93,14 +93,20 @@ def load_and_validate_checkpoint(
         metadata = raw_bundle["metadata"]
         model_config = metadata.get("model_config", {"architecture": "standard_mlp"})
     elif isinstance(raw_bundle, dict):
-        # Legacy raw state_dict fallback
+        # Legacy raw state_dict fallback - inspect keys to infer architecture
         state_dict = raw_bundle
+        if any(k.startswith("hidden_layers") for k in state_dict.keys()) or "B" in state_dict:
+            inferred_arch = "hard_constrained_pinn"
+        elif any(k.startswith("mlp") for k in state_dict.keys()):
+            inferred_arch = "hard_constrained_pinn"
+        else:
+            inferred_arch = "standard_mlp"
         metadata = {
             "version": "1.0.0-legacy",
             "git_commit": "legacy_checkpoint",
             "training_seed": 42,
             "reynolds_number": physics_config.reynolds_number,
-            "model_config": {"architecture": "standard_mlp"}
+            "model_config": {"architecture": inferred_arch}
         }
         model_config = metadata["model_config"]
     else:

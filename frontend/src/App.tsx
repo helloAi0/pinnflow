@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import type { FieldRequest, FieldResponse, FieldVariable, HealthResponse, VisualizationMode, ActiveTab } from './types/api'
 import { checkHealth, fetchFieldPrediction, fetchReferenceField } from './services/api'
 import { HeaderBar } from './components/HeaderBar'
@@ -8,7 +8,7 @@ import { MetricsFooter } from './components/MetricsFooter'
 import { BenchmarkTab } from './components/BenchmarkTab'
 import { ReproducibilityTab } from './components/ReproducibilityTab'
 import { DiagnosticsTab } from './components/DiagnosticsTab'
-import { Activity, Layers, Award, ShieldCheck, BarChart2 } from 'lucide-react'
+import { Activity, Layers, Award, ShieldCheck, BarChart2, AlertTriangle, ExternalLink } from 'lucide-react'
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse>({
@@ -24,11 +24,12 @@ export function App() {
     reference_dataset_available: false,
   })
 
+  const [isRefreshingHealth, setIsRefreshingHealth] = useState(false)
   const [activeTab, setActiveTab] = useState<ActiveTab>('field')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Experiment parameters
+  // Scientific experiment parameters
   const [params, setParams] = useState<FieldRequest>({
     x_min: 1.0,
     x_max: 8.0,
@@ -44,7 +45,7 @@ export function App() {
   const [selectedBudget, setSelectedBudget] = useState<number>(5000)
   const [selectedNoise, setSelectedNoise] = useState<number>(0.0)
   const [selectedSplit, setSelectedSplit] = useState<string>('random')
-  const [selectedSeed, setSelectedSeed] = useState<number>(42)
+  const [selectedSeed, setSelectedSeed] = useState<number>(0)
 
   const [fieldData, setFieldData] = useState<FieldResponse | null>(null)
   const [refData, setRefData] = useState<FieldResponse | null>(null)
@@ -55,14 +56,23 @@ export function App() {
   const [latencyMs, setLatencyMs] = useState<number | null>(null)
   const [l2Error, setL2Error] = useState<number | null>(null)
 
-  useEffect(() => {
-    const poll = async () => setHealth(await checkHealth())
-    poll()
-    const interval = setInterval(poll, 15000)
-    return () => clearInterval(interval)
+  const refreshHealthStatus = useCallback(async () => {
+    setIsRefreshingHealth(true)
+    try {
+      const h = await checkHealth()
+      setHealth(h)
+    } finally {
+      setIsRefreshingHealth(false)
+    }
   }, [])
 
-  const handleEvaluate = React.useCallback(async () => {
+  useEffect(() => {
+    refreshHealthStatus()
+    const interval = setInterval(refreshHealthStatus, 15000)
+    return () => clearInterval(interval)
+  }, [refreshHealthStatus])
+
+  const handleEvaluate = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     setL2Error(null)
@@ -143,6 +153,9 @@ export function App() {
       grid_resolution: `${params.nx}x${params.ny}`,
       relative_l2_error: l2Error,
       pde_residual_loss: fieldData.metrics.pde_loss,
+      continuity_residual_mean: fieldData.metrics.continuity_residual_mean,
+      momentum_x_residual_mean: fieldData.metrics.momentum_x_residual_mean,
+      momentum_y_residual_mean: fieldData.metrics.momentum_y_residual_mean,
       latency_ms: latencyMs,
       checkpoint_sha: health.checkpoint_sha,
       git_commit: health.git_commit
@@ -158,75 +171,97 @@ export function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-black">
-      <HeaderBar health={health} />
+      <HeaderBar
+        health={health}
+        onRefreshHealth={refreshHealthStatus}
+        isRefreshing={isRefreshingHealth}
+      />
+
+      {/* Backend Status Advisory Banner (if backend is booting or offline) */}
+      {health.status === 'offline' && (
+        <div className="bg-amber-950/90 border-b border-amber-800/80 px-6 py-2.5 text-xs text-amber-200 flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <AlertTriangle className="h-4 w-4 text-amber-400" />
+            <span>
+              <strong>Connecting to Backend:</strong> Free-tier cloud instances (e.g. Render) may take 30-50s to wake up on cold boot.
+            </span>
+          </div>
+          <button
+            onClick={refreshHealthStatus}
+            className="underline hover:text-white font-mono text-[11px]"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
 
       {/* Navigation Tab Bar */}
-      <div className="border-b border-slate-800 bg-slate-900/40 px-6 backdrop-blur-sm">
+      <div className="border-b border-slate-800/80 bg-slate-900/50 px-6 backdrop-blur-md sticky top-[73px] z-20">
         <nav className="flex space-x-6 font-mono text-xs">
           <button
             onClick={() => { setActiveTab('field'); setVisMode('prediction') }}
-            className={`flex items-center space-x-2 py-3 border-b-2 font-medium transition ${
+            className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'field'
-                ? 'border-cyan-400 text-cyan-400'
+                ? 'border-cyan-400 text-cyan-300 font-bold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Activity className="h-4 w-4" />
+            <Activity className="h-4 w-4 text-cyan-400" />
             <span>Field View</span>
           </button>
 
           <button
             onClick={() => { setActiveTab('error_analysis'); setVisMode('absolute_error') }}
-            className={`flex items-center space-x-2 py-3 border-b-2 font-medium transition ${
+            className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'error_analysis'
-                ? 'border-cyan-400 text-cyan-400'
+                ? 'border-cyan-400 text-cyan-300 font-bold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <BarChart2 className="h-4 w-4" />
+            <BarChart2 className="h-4 w-4 text-cyan-400" />
             <span>Error Analysis</span>
           </button>
 
           <button
             onClick={() => setActiveTab('diagnostics')}
-            className={`flex items-center space-x-2 py-3 border-b-2 font-medium transition ${
+            className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'diagnostics'
-                ? 'border-cyan-400 text-cyan-400'
+                ? 'border-cyan-400 text-cyan-300 font-bold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Layers className="h-4 w-4" />
+            <Layers className="h-4 w-4 text-cyan-400" />
             <span>Physics Diagnostics</span>
           </button>
 
           <button
             onClick={() => setActiveTab('benchmark')}
-            className={`flex items-center space-x-2 py-3 border-b-2 font-medium transition ${
+            className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'benchmark'
-                ? 'border-cyan-400 text-cyan-400'
+                ? 'border-cyan-400 text-cyan-300 font-bold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Award className="h-4 w-4" />
+            <Award className="h-4 w-4 text-cyan-400" />
             <span>Benchmark Matrix</span>
           </button>
 
           <button
             onClick={() => setActiveTab('reproducibility')}
-            className={`flex items-center space-x-2 py-3 border-b-2 font-medium transition ${
+            className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'reproducibility'
-                ? 'border-cyan-400 text-cyan-400'
+                ? 'border-cyan-400 text-cyan-300 font-bold'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <ShieldCheck className="h-4 w-4" />
+            <ShieldCheck className="h-4 w-4 text-cyan-400" />
             <span>Reproducibility Manifest</span>
           </button>
         </nav>
       </div>
 
       {/* Main Scientific Instrument Workspace */}
-      <main className="flex-1 p-6 space-y-6">
+      <main className="flex-1 p-6 space-y-6 max-w-7xl mx-auto w-full">
         {activeTab === 'field' || activeTab === 'error_analysis' ? (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <div className="lg:col-span-1">
@@ -286,6 +321,28 @@ export function App() {
           health={health}
         />
       </main>
+
+      {/* Enterprise Platform Footer */}
+      <footer className="border-t border-slate-900 bg-slate-950 px-6 py-4 text-center text-xs text-slate-500 font-mono flex flex-wrap items-center justify-between gap-2 max-w-7xl mx-auto w-full">
+        <div>
+          PINNFlow Scientific Platform &copy; 2026. Physics-Informed Neural Networks for Navier-Stokes Flow Reconstruction.
+        </div>
+        <div className="flex items-center space-x-4">
+          <span>Re = {health.reynolds_number}</span>
+          <span>&bull;</span>
+          <span>Commit: {health.git_commit ? health.git_commit.slice(0, 7) : 'head'}</span>
+          <span>&bull;</span>
+          <a
+            href="https://github.com/helloAi0/pinnflow"
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-cyan-400 flex items-center gap-1 transition"
+          >
+            <span>GitHub</span>
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+      </footer>
     </div>
   )
 }

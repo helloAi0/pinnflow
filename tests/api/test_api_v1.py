@@ -1,8 +1,17 @@
 import pytest
-from starlette.testclient import TestClient
+from fastapi.testclient import TestClient
 from src.api.main import app
+import src.main
+import main
+import backend.main
 
 client = TestClient(app)
+
+def test_entrypoint_proxies():
+    """Verify that all proxy entrypoints export the canonical FastAPI app."""
+    assert src.main.app is app
+    assert main.app is app
+    assert backend.main.app is app
 
 def test_api_root():
     res = client.get("/")

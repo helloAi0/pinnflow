@@ -1,3 +1,22 @@
+export interface PointRequest {
+  x: number
+  y: number
+  t: number
+  compute_vorticity?: boolean
+}
+
+export interface PointResponse {
+  x: number
+  y: number
+  t: number
+  u: number
+  v: number
+  p: number
+  velocity_magnitude: number
+  vorticity?: number
+  request_id: string
+}
+
 export interface FieldRequest {
   x_min: number
   x_max: number

@@ -11,24 +11,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY requirements.txt pyproject.toml /app/
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir -e .
 
-# Copy application source code
+# Copy application source code and entrypoints
 COPY src/ /app/src/
+COPY backend/ /app/backend/
 COPY configs/ /app/configs/
 COPY datasets/ /app/datasets/
+COPY main.py /app/main.py
 
-# Ensure datasets directory and model weights are accessible
+# Ensure model weights and artifacts are accessible
 COPY final_pinn_model.pt[h] /app/
 COPY artifacts/ /app/artifacts/
 
-# Set Python path
+# Set environment variables
 ENV PYTHONPATH=/app
 ENV PINNFLOW_CHECKPOINT=/app/final_pinn_model.pth
+ENV PORT=8000
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+    CMD curl -f http://localhost:${PORT}/api/v1/health || exit 1
 
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -15,6 +15,8 @@ from src.config.physics_config import PhysicsConfig, DEFAULT_PHYSICS_CONFIG
 from src.models.checkpoint import load_and_validate_checkpoint, get_git_commit_sha
 from src.losses.pde_loss import PDELoss
 
+from fastapi.middleware.gzip import GZipMiddleware
+
 # Setup structured logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [req_id=%(request_id)s] %(message)s")
 logger = logging.getLogger("PINNFlowAPI")
@@ -37,31 +39,47 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 ENV_CKPT = os.getenv("PINNFLOW_CHECKPOINT")
 CANDIDATE_PATHS = [
     ENV_CKPT,
-    "artifacts/fourier_constrained_seed8008.pth",
     "final_pinn_model.pth",
+    "artifacts/fourier_constrained_seed8008.pth",
     "results/smoke/model_checkpoint.pth"
 ]
-CKPT_PATH = next((p for p in CANDIDATE_PATHS if p and os.path.exists(p)), None)
 
 # Global model state
 MODEL: Optional[torch.nn.Module] = None
 MODEL_METADATA: Dict[str, Any] = {}
 CHECKPOINT_VALID = False
 CHECKPOINT_ERROR: Optional[str] = None
+CKPT_PATH: Optional[str] = None
 
-if CKPT_PATH:
-    is_valid, loaded_model, meta, err = load_and_validate_checkpoint(CKPT_PATH, device=DEVICE, physics_config=PHYSICS_CONFIG)
-    if is_valid and loaded_model is not None:
-        MODEL = loaded_model
-        MODEL_METADATA = meta
-        CHECKPOINT_VALID = True
-        logger.info(f"[+] Loaded and verified canonical checkpoint: {CKPT_PATH} (SHA: {meta.get('checkpoint_sha', '')[:12]})", extra={"request_id": "startup"})
-    else:
-        CHECKPOINT_ERROR = err
-        logger.warning(f"[-] Checkpoint validation failed: {err}", extra={"request_id": "startup"})
-else:
-    CHECKPOINT_ERROR = "No checkpoint file found at configured paths."
-    logger.warning("[-] No checkpoint file found at startup.", extra={"request_id": "startup"})
+for candidate in CANDIDATE_PATHS:
+    if candidate and os.path.exists(candidate):
+        is_valid, loaded_model, meta, err = load_and_validate_checkpoint(candidate, device=DEVICE, physics_config=PHYSICS_CONFIG)
+        if is_valid and loaded_model is not None:
+            MODEL = loaded_model
+            MODEL_METADATA = meta
+            CHECKPOINT_VALID = True
+            CKPT_PATH = candidate
+            CHECKPOINT_ERROR = None
+            logger.info(f"[+] Loaded and verified canonical checkpoint: {candidate} (SHA: {meta.get('checkpoint_sha', '')[:12]})", extra={"request_id": "startup"})
+            break
+        else:
+            logger.warning(f"[-] Candidate checkpoint '{candidate}' validation failed: {err}", extra={"request_id": "startup"})
+            if CHECKPOINT_ERROR is None:
+                CHECKPOINT_ERROR = err
+
+if not CHECKPOINT_VALID or MODEL is None:
+    # Graceful fallback model initialization for zero-crash operations
+    try:
+        from src.models.factory import create_model
+        fallback_model, fallback_meta = create_model({"architecture": "hard_constrained_pinn"}, physics_config=PHYSICS_CONFIG)
+        MODEL = fallback_model.to(DEVICE)
+        MODEL_METADATA = fallback_meta
+        MODEL_METADATA["version"] = "2.0.0-uncalibrated"
+        MODEL_METADATA["git_commit"] = get_git_commit_sha()
+        MODEL_METADATA["checkpoint_filename"] = "uncalibrated_fallback"
+        logger.info("[*] Initialized fallback uncalibrated PINN model for graceful bootstrap", extra={"request_id": "startup"})
+    except Exception as e:
+        logger.error(f"[-] Failed to instantiate fallback model: {e}", extra={"request_id": "startup"})
 
 # Reference CFD data caching
 DATA_CANDIDATES = [
@@ -176,6 +194,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def add_request_metadata(request: Request, call_next):
@@ -388,4 +407,6 @@ def reference_field(req: FieldRequest, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.api.main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "0.0.0.0")
+    uvicorn.run("src.api.main:app", host=host, port=port, reload=True)

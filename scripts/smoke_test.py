@@ -17,7 +17,7 @@ import torch
 # Ensure repository root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from starlette.testclient import TestClient
+from fastapi.testclient import TestClient
 
 from src.experiments.benchmark import run_single_experiment
 from src.data.observation_dataset import DataPipelineManager
