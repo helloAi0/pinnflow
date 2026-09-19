@@ -1,11 +1,27 @@
 import type { FieldRequest, FieldResponse, HealthResponse, MetadataResponse, PointRequest, PointResponse } from '../types/api'
 
-// Dynamically resolve API URL with fallback
+// Dynamically resolve API URL with smart production fallback
 export const getApiUrl = (): string => {
   const envUrl = import.meta.env.VITE_API_URL
   if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
-    return envUrl.replace(/\/+$/, '')
+    return envUrl.replace(/\/+\$/, '')
   }
+  
+  // If no environment variable is provided, check if we are running in the browser
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname
+    
+    // If we are on Vercel or any live production domain, infer the Render backend url
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      // Option A: If your Render URL uses a predictable format based on your project name:
+      return 'https://onrender.com' 
+      
+      // Option B: If you prefer to fallback to the current origin (e.g. if using a proxy/same domain):
+      // return window.location.origin
+    }
+  }
+  
+  // Default fallback for local development
   return 'http://localhost:8000'
 }
 
