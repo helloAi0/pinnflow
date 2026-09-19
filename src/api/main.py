@@ -189,7 +189,7 @@ class HealthResponse(BaseModel):
     architecture: Optional[str] = None
     reynolds_number: float
     reference_dataset_available: bool
-
+    
 # ==========================================
 # 3. Application Setup & Middleware
 # ==========================================
@@ -199,12 +199,11 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Configurable CORS
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+# Configurable CORS - Wildcard allowed since credentials are false
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS if CORS_ORIGINS != ["*"] else ["*"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
