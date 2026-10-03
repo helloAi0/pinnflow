@@ -99,11 +99,26 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-900/80 bg-red-950/60 p-3 text-xs text-red-200 shadow-md">
-          <div className="flex items-center space-x-1.5 font-bold text-red-400 mb-1">
-            <span>Query Error:</span>
+        <div className="rounded-xl border border-red-800/80 bg-red-950/70 p-3.5 text-xs text-red-200 shadow-lg space-y-2">
+          <div className="flex items-center space-x-1.5 font-bold text-red-300">
+            <span className="flex h-2 w-2 rounded-full bg-red-400 animate-ping" />
+            <span>Backend Notice / Error</span>
           </div>
-          <p className="font-mono text-[11px]">{error}</p>
+          <p className="font-mono text-[11px] text-red-200 leading-relaxed">{error}</p>
+          {(error.includes('502') || error.includes('memory') || error.includes('OOM') || error.includes('timed out') || error.includes('Resolution')) && (
+            <div className="flex flex-wrap gap-2 pt-1 border-t border-red-900/60">
+              <button
+                type="button"
+                onClick={() => {
+                  setParams((prev) => ({ ...prev, nx: 60, ny: 30, compute_vorticity: false }))
+                  setTimeout(onEvaluate, 100)
+                }}
+                className="flex items-center space-x-1 rounded bg-red-900/80 hover:bg-red-800 px-2.5 py-1 text-[11px] font-mono text-white font-bold transition shadow-sm"
+              >
+                <span>⚡ Set Safe Grid (60x30) & Retry</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 

@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 import logging
+import gc
 from typing import Optional, List, Dict, Any
 import numpy as np
 import scipy.io
@@ -90,7 +91,7 @@ if not CHECKPOINT_VALID or MODEL is None:
     except Exception as e:
         logger.error(f"[-] Failed to instantiate fallback model: {e}", extra={"request_id": "startup"})
 
-# Reference CFD data caching
+# Reference CFD data candidate path resolution (Lazy Loading on demand to stay under 512MB RAM)
 RAW_DATA_CANDIDATES = [
     "datasets/raissi_cylinder/cylinder_nektar_wake.mat",
     "data/cylinder_nektar_wake.mat"
@@ -100,21 +101,11 @@ for p in RAW_DATA_CANDIDATES:
     DATA_CANDIDATES.append(p)
     DATA_CANDIDATES.append(os.path.join(REPO_ROOT, p))
 
-DATA_PATH = next((p for p in DATA_CANDIDATES if os.path.exists(p) and os.path.getsize(p) > 1000000), None)
-
-CACHED_DNS: Optional[Dict[str, Any]] = None
+DATA_PATH: Optional[str] = next((p for p in DATA_CANDIDATES if os.path.exists(p) and os.path.getsize(p) > 1000000), None)
 if DATA_PATH:
-    try:
-        mat = scipy.io.loadmat(DATA_PATH)
-        CACHED_DNS = {
-            "X_star": mat["X_star"].astype(np.float32),
-            "t_star": mat["t"].astype(np.float32).flatten(),
-            "U_star": mat["U_star"].astype(np.float32),
-            "p_star": mat["p_star"].astype(np.float32)
-        }
-        logger.info(f"[+] Cached DNS reference dataset ({CACHED_DNS['X_star'].shape[0]} spatial points)", extra={"request_id": "startup"})
-    except Exception as e:
-        logger.warning(f"[-] Failed to cache reference data: {e}", extra={"request_id": "startup"})
+    logger.info(f"[+] Reference DNS dataset discovered at {DATA_PATH} (lazy-load mode enabled)", extra={"request_id": "startup"})
+else:
+    logger.warning("[-] Reference DNS dataset not found on disk", extra={"request_id": "startup"})
 
 # ==========================================
 # 2. Strict Pydantic Contracts
@@ -189,7 +180,7 @@ class HealthResponse(BaseModel):
     architecture: Optional[str] = None
     reynolds_number: float
     reference_dataset_available: bool
-    
+
 # ==========================================
 # 3. Application Setup & Middleware
 # ==========================================
@@ -236,6 +227,7 @@ def verify_service_ready():
 @app.get("/api/v1/health", response_model=HealthResponse)
 @app.get("/health", response_model=HealthResponse)
 def get_health():
+    is_dataset_avail = bool(DATA_PATH and os.path.exists(DATA_PATH))
     return HealthResponse(
         status="ok" if CHECKPOINT_VALID else "service_not_ready",
         trained=CHECKPOINT_VALID,
@@ -246,7 +238,7 @@ def get_health():
         git_commit=MODEL_METADATA.get("git_commit", get_git_commit_sha()),
         architecture=MODEL_METADATA.get("architecture"),
         reynolds_number=PHYSICS_CONFIG.reynolds_number,
-        reference_dataset_available=CACHED_DNS is not None
+        reference_dataset_available=is_dataset_avail
     )
 
 @app.get("/")
@@ -283,8 +275,8 @@ def predict_point(req: PointRequest, request: Request):
         coords.requires_grad_(True)
         preds = MODEL(coords)
         u, v = preds[:, 0:1], preds[:, 1:2]
-        grads_u = torch.autograd.grad(u, coords, grad_outputs=torch.ones_like(u), create_graph=True)[0]
-        grads_v = torch.autograd.grad(v, coords, grad_outputs=torch.ones_like(v), create_graph=True)[0]
+        grads_u = torch.autograd.grad(u, coords, grad_outputs=torch.ones_like(u), retain_graph=True, create_graph=False)[0]
+        grads_v = torch.autograd.grad(v, coords, grad_outputs=torch.ones_like(v), create_graph=False)[0]
         vorticity_val = float((grads_v[:, 0:1] - grads_u[:, 1:2]).item())
     else:
         with torch.no_grad():
@@ -315,38 +307,72 @@ def predict_field(req: FieldRequest, request: Request):
     nx = int(req.nx)
     ny = int(req.ny)
 
-    x_line = np.linspace(req.x_min, req.x_max, nx)
-    y_line = np.linspace(req.y_min, req.y_max, ny)
+    x_line = np.linspace(req.x_min, req.x_max, nx, dtype=np.float32)
+    y_line = np.linspace(req.y_min, req.y_max, ny, dtype=np.float32)
     X, Y = np.meshgrid(x_line, y_line)
-    T = np.full_like(X, req.t)
+    T = np.full_like(X, req.t, dtype=np.float32)
 
     flat_coords = np.stack([X.flatten(), Y.flatten(), T.flatten()], axis=-1)
-    coords_tensor = torch.tensor(flat_coords, dtype=torch.float32, device=DEVICE).requires_grad_(True)
+    total_points = flat_coords.shape[0]
 
-    # Compute autograd residuals and predictions
+    # Batching to guarantee low memory overhead and prevent Render 512MB RAM OOM
+    BATCH_SIZE = 500
     pde_module = PDELoss(physics_config=PHYSICS_CONFIG)
-    preds = MODEL(coords_tensor)
-    u_t, v_t, p_t = preds[:, 0:1], preds[:, 1:2], preds[:, 2:3]
 
-    residuals = pde_module.compute_residuals(coords_tensor, preds)
-    r_c = residuals["continuity"].detach().cpu().numpy()
-    r_u = residuals["momentum_x"].detach().cpu().numpy()
-    r_v = residuals["momentum_y"].detach().cpu().numpy()
+    u_chunks = []
+    v_chunks = []
+    p_chunks = []
+    r_c_chunks = []
+    r_u_chunks = []
+    r_v_chunks = []
+    vorticity_chunks = [] if req.compute_vorticity else None
 
-    pde_loss = float(np.mean(r_c**2 + r_u**2 + r_v**2))
-    cont_mean = float(np.mean(np.abs(r_c)))
-    mom_x_mean = float(np.mean(np.abs(r_u)))
-    mom_y_mean = float(np.mean(np.abs(r_v)))
+    for i in range(0, total_points, BATCH_SIZE):
+        chunk_np = flat_coords[i:i + BATCH_SIZE]
+        chunk_coords = torch.tensor(chunk_np, dtype=torch.float32, device=DEVICE).requires_grad_(True)
+        
+        chunk_preds = MODEL(chunk_coords)
+        chunk_residuals = pde_module.compute_residuals(chunk_coords, chunk_preds)
 
-    u_grid = u_t.detach().cpu().numpy().reshape(ny, nx)
-    v_grid = v_t.detach().cpu().numpy().reshape(ny, nx)
-    p_grid = p_t.detach().cpu().numpy().reshape(ny, nx)
+        u_chunks.append(chunk_preds[:, 0:1].detach().cpu().numpy())
+        v_chunks.append(chunk_preds[:, 1:2].detach().cpu().numpy())
+        p_chunks.append(chunk_preds[:, 2:3].detach().cpu().numpy())
+
+        r_c_chunks.append(chunk_residuals["continuity"].detach().cpu().numpy())
+        r_u_chunks.append(chunk_residuals["momentum_x"].detach().cpu().numpy())
+        r_v_chunks.append(chunk_residuals["momentum_y"].detach().cpu().numpy())
+
+        if req.compute_vorticity and vorticity_chunks is not None:
+            vorticity_chunks.append(chunk_residuals["vorticity"].detach().cpu().numpy())
+
+        # Explicit cleanup after each chunk to clear computational graph
+        del chunk_coords, chunk_preds, chunk_residuals
+
+    # Concatenate batched evaluations
+    u_all = np.vstack(u_chunks).astype(np.float32)
+    v_all = np.vstack(v_chunks).astype(np.float32)
+    p_all = np.vstack(p_chunks).astype(np.float32)
+    r_c_all = np.vstack(r_c_chunks).astype(np.float32)
+    r_u_all = np.vstack(r_u_chunks).astype(np.float32)
+    r_v_all = np.vstack(r_v_chunks).astype(np.float32)
+
+    pde_loss = float(np.mean(r_c_all**2 + r_u_all**2 + r_v_all**2))
+    cont_mean = float(np.mean(np.abs(r_c_all)))
+    mom_x_mean = float(np.mean(np.abs(r_u_all)))
+    mom_y_mean = float(np.mean(np.abs(r_v_all)))
+
+    u_grid = u_all.reshape(ny, nx)
+    v_grid = v_all.reshape(ny, nx)
+    p_grid = p_all.reshape(ny, nx)
     vel_mag_grid = np.sqrt(u_grid**2 + v_grid**2)
 
     vorticity_grid = None
-    if req.compute_vorticity:
-        w = residuals["vorticity"].detach().cpu().numpy().reshape(ny, nx)
-        vorticity_grid = w.tolist()
+    if req.compute_vorticity and vorticity_chunks is not None:
+        vorticity_all = np.vstack(vorticity_chunks).astype(np.float32)
+        vorticity_grid = vorticity_all.reshape(ny, nx).tolist()
+
+    del u_chunks, v_chunks, p_chunks, r_c_chunks, r_u_chunks, r_v_chunks
+    gc.collect()
 
     return FieldResponse(
         x=X.tolist(),
@@ -375,51 +401,71 @@ def predict_field(req: FieldRequest, request: Request):
 @app.post("/api/v1/reference/field")
 @app.post("/reference/field")
 def reference_field(req: FieldRequest, request: Request):
-    if CACHED_DNS is None:
+    if not DATA_PATH or not os.path.exists(DATA_PATH):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Reference CFD dataset is not available."
+            detail="Reference CFD dataset is not available on server."
         )
     req_id = getattr(request.state, "request_id", "default")
 
-    X_star = CACHED_DNS["X_star"]
-    t_star = CACHED_DNS["t_star"]
-    U_star = CACHED_DNS["U_star"]
-    p_star = CACHED_DNS["p_star"]
+    try:
+        # Load on-demand lazily to conserve RAM
+        mat = scipy.io.loadmat(DATA_PATH)
+        X_star = mat["X_star"].astype(np.float32)
+        t_star = mat["t"].astype(np.float32).flatten()
 
-    t_idx = int(np.argmin(np.abs(t_star - req.t)))
-    u_exact = U_star[:, 0, t_idx]
-    v_exact = U_star[:, 1, t_idx]
-    p_exact = p_star[:, t_idx]
+        t_idx = int(np.argmin(np.abs(t_star - req.t)))
+        matched_t = float(t_star[t_idx])
 
-    x_line = np.linspace(req.x_min, req.x_max, req.nx)
-    y_line = np.linspace(req.y_min, req.y_max, req.ny)
-    X_grid, Y_grid = np.meshgrid(x_line, y_line)
+        u_exact = mat["U_star"][:, 0, t_idx].astype(np.float32)
+        v_exact = mat["U_star"][:, 1, t_idx].astype(np.float32)
+        p_exact = mat["p_star"][:, t_idx].astype(np.float32)
 
-    u_interp = griddata(X_star, u_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0)
-    v_interp = griddata(X_star, v_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0)
-    p_interp = griddata(X_star, p_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0)
+        # Immediately free the full raw .mat structure
+        del mat
+        gc.collect()
 
-    vel_mag = np.sqrt(u_interp**2 + v_interp**2)
+        x_line = np.linspace(req.x_min, req.x_max, req.nx, dtype=np.float32)
+        y_line = np.linspace(req.y_min, req.y_max, req.ny, dtype=np.float32)
+        X_grid, Y_grid = np.meshgrid(x_line, y_line)
 
-    return {
-        "x": X_grid.tolist(),
-        "y": Y_grid.tolist(),
-        "u": u_interp.tolist(),
-        "v": v_interp.tolist(),
-        "p": p_interp.tolist(),
-        "velocity_magnitude": vel_mag.tolist(),
-        "metrics": {
-            "time_snapshot_requested": req.t,
-            "time_snapshot_matched": float(t_star[t_idx]),
-            "time_index": t_idx
-        },
-        "status": "success",
-        "request_id": req_id
-    }
+        u_interp = griddata(X_star, u_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0).astype(np.float32)
+        v_interp = griddata(X_star, v_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0).astype(np.float32)
+        p_interp = griddata(X_star, p_exact, (X_grid, Y_grid), method="cubic", fill_value=0.0).astype(np.float32)
+
+        # Free raw coordinate arrays after interpolation
+        del X_star, u_exact, v_exact, p_exact
+        gc.collect()
+
+        vel_mag = np.sqrt(u_interp**2 + v_interp**2)
+
+        return {
+            "x": X_grid.tolist(),
+            "y": Y_grid.tolist(),
+            "u": u_interp.tolist(),
+            "v": v_interp.tolist(),
+            "p": p_interp.tolist(),
+            "velocity_magnitude": vel_mag.tolist(),
+            "metrics": {
+                "time_snapshot_requested": req.t,
+                "time_snapshot_matched": matched_t,
+                "time_index": t_idx
+            },
+            "status": "success",
+            "request_id": req_id
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate reference field: {e}", extra={"request_id": req_id})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to interpolate reference DNS field: {str(e)}"
+        )
+    finally:
+        gc.collect()
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
     uvicorn.run("src.api.main:app", host=host, port=port, reload=True)
+
