@@ -22,30 +22,63 @@ export const getApiUrl = (): string => {
 const API_URL = getApiUrl()
 
 /**
- * Standard fetch wrapper with custom timeout and without credentials (enabling wildcard CORS)
+ * Robust fetch wrapper with 60,000ms timeout and exponential backoff retry logic.
  */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 25000): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch(url, {
-      ...options,
-      credentials: 'omit',
-      signal: controller.signal
-    })
-    clearTimeout(timer)
-    return res
-  } catch (err: unknown) {
-    clearTimeout(timer)
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Request timed out. Render backend may be undergoing a cold-start boot or processing high load.')
+export async function fetchWithTimeoutAndRetry(
+  url: string,
+  options: RequestInit = {},
+  maxRetries = 2,
+  timeoutMs = 60000
+): Promise<Response> {
+  let lastError: unknown = null
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const res = await fetch(url, {
+        ...options,
+        credentials: 'omit',
+        signal: controller.signal
+      })
+      clearTimeout(timer)
+
+      // If response is successful or client-side 4xx (not 502/504), return immediately
+      if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 408)) {
+        return res
+      }
+
+      // If server returned 502 / 504 / 503, retry on remaining attempts
+      if (attempt < maxRetries && (res.status === 502 || res.status === 504 || res.status === 503)) {
+        const delay = 2000 * Math.pow(1.5, attempt)
+        await new Promise((r) => setTimeout(r, delay))
+        continue
+      }
+
+      return res
+    } catch (err: unknown) {
+      clearTimeout(timer)
+      lastError = err
+
+      if (attempt < maxRetries) {
+        const delay = 2000 * Math.pow(1.5, attempt)
+        await new Promise((r) => setTimeout(r, delay))
+      }
     }
-    throw err
   }
+
+  if (lastError instanceof Error && lastError.name === 'AbortError') {
+    throw new Error(
+      'Request timed out (60s limit). If using free-tier Render, the backend server may still be spinning up. Please try again in 10-20 seconds.'
+    )
+  }
+
+  throw lastError || new Error('Network connection failed.')
 }
 
 /**
- * Helper to parse backend error responses and format actionable messages (e.g. 502 OOM, 504 Gateway Timeout)
+ * Helper to parse backend error responses and format actionable messages
  */
 async function handleResponseError(res: Response, defaultMessage: string): Promise<never> {
   if (res.status === 502) {
@@ -55,7 +88,7 @@ async function handleResponseError(res: Response, defaultMessage: string): Promi
   }
   if (res.status === 504) {
     throw new Error(
-      'Backend request timed out (HTTP 504 Gateway Timeout). Render service may still be waking up. Please retry in a few seconds.'
+      'Backend request timed out (HTTP 504 Gateway Timeout). Render service may still be waking up. Please retry in a few moments.'
     )
   }
   if (res.status === 503) {
@@ -69,17 +102,28 @@ async function handleResponseError(res: Response, defaultMessage: string): Promi
 }
 
 /**
+ * Lightweight ping to trigger cold-start wakeup on Render
+ */
+export async function pingWakeup(): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/wakeup`, { method: 'GET' }, 1, 15000)
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/**
  * Robust health check with exponential backoff to tolerate Render 50s cold-start spin-ups
  */
 export async function checkHealth(maxRetries = 3, initialDelayMs = 1500): Promise<HealthResponse> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const res = await fetchWithTimeout(`${API_URL}/api/v1/health`, { method: 'GET' }, 12000)
+      const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/health`, { method: 'GET' }, 0, 20000)
       if (res.ok) {
         return await res.json()
       }
     } catch {
-      // If not the final attempt, wait with exponential backoff
       if (attempt < maxRetries - 1) {
         const delay = initialDelayMs * Math.pow(1.5, attempt)
         await new Promise((resolve) => setTimeout(resolve, delay))
@@ -104,7 +148,7 @@ export async function checkHealth(maxRetries = 3, initialDelayMs = 1500): Promis
 
 export async function fetchMetadata(): Promise<MetadataResponse | null> {
   try {
-    const res = await fetchWithTimeout(`${API_URL}/api/v1/metadata`, { method: 'GET' }, 10000)
+    const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/metadata`, { method: 'GET' }, 1, 15000)
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -116,14 +160,15 @@ export async function fetchFieldPrediction(
   payload: FieldRequest
 ): Promise<{ data: FieldResponse; latencyMs: number }> {
   const start = performance.now()
-  const res = await fetchWithTimeout(
+  const res = await fetchWithTimeoutAndRetry(
     `${API_URL}/api/v1/predict/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     },
-    35000
+    2,
+    60000
   )
 
   if (!res.ok) {
@@ -138,14 +183,15 @@ export async function fetchFieldPrediction(
 export async function fetchReferenceField(
   payload: FieldRequest
 ): Promise<FieldResponse> {
-  const res = await fetchWithTimeout(
+  const res = await fetchWithTimeoutAndRetry(
     `${API_URL}/api/v1/reference/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     },
-    30000
+    2,
+    60000
   )
 
   if (!res.ok) {
@@ -158,14 +204,15 @@ export async function fetchReferenceField(
 export async function fetchPointPrediction(
   payload: PointRequest
 ): Promise<PointResponse> {
-  const res = await fetchWithTimeout(
+  const res = await fetchWithTimeoutAndRetry(
     `${API_URL}/api/v1/predict/point`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     },
-    15000
+    1,
+    20000
   )
 
   if (!res.ok) {
@@ -174,4 +221,5 @@ export async function fetchPointPrediction(
 
   return await res.json()
 }
+
 

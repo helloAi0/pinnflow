@@ -27,6 +27,11 @@ def test_api_health():
     assert "trained" in data
     assert "model_version" in data
 
+def test_api_wakeup():
+    res = client.get("/api/v1/wakeup")
+    assert res.status_code == 200
+    assert res.json()["status"] == "awake"
+
 def test_api_metadata():
     res = client.get("/api/v1/metadata")
     assert res.status_code == 200

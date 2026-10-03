@@ -16,6 +16,11 @@ def test_health_endpoint():
     assert response.status_code == 200
     assert "status" in response.json()
 
+def test_wakeup_endpoint():
+    response = client.get("/wakeup")
+    assert response.status_code == 200
+    assert response.json()["status"] == "awake"
+
 def test_predict_point_endpoint():
     payload = {
         "x": 2.0, 

@@ -15,7 +15,7 @@ interface QueryControlsProps {
   setSelectedSplit: (s: string) => void
   selectedSeed: number
   setSelectedSeed: (s: number) => void
-  onEvaluate: () => void
+  onEvaluate: (overrideParams?: FieldRequest) => void
   isLoading: boolean
   error: string | null
   compareMode: boolean
@@ -73,13 +73,21 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
 
   const applyPreset = (presetType: 'vortex' | 'inflow' | 'farwake' | 'highres') => {
     if (presetType === 'vortex') {
-      setParams((prev) => ({ ...prev, t: 10.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
+      const p: FieldRequest = { ...params, t: 10.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
+      setParams(p)
+      onEvaluate(p)
     } else if (presetType === 'inflow') {
-      setParams((prev) => ({ ...prev, t: 2.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
+      const p: FieldRequest = { ...params, t: 2.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
+      setParams(p)
+      onEvaluate(p)
     } else if (presetType === 'farwake') {
-      setParams((prev) => ({ ...prev, t: 16.0, nx: 120, ny: 60, x_min: 2.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
+      const p: FieldRequest = { ...params, t: 16.0, nx: 100, ny: 50, x_min: 2.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
+      setParams(p)
+      onEvaluate(p)
     } else if (presetType === 'highres') {
-      setParams((prev) => ({ ...prev, nx: 140, ny: 70 }))
+      const p: FieldRequest = { ...params, nx: 120, ny: 60 }
+      setParams(p)
+      onEvaluate(p)
     }
   }
 
@@ -110,8 +118,9 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setParams((prev) => ({ ...prev, nx: 60, ny: 30, compute_vorticity: false }))
-                  setTimeout(onEvaluate, 100)
+                  const safeParams: FieldRequest = { ...params, nx: 60, ny: 30, compute_vorticity: false }
+                  setParams(safeParams)
+                  onEvaluate(safeParams)
                 }}
                 className="flex items-center space-x-1 rounded bg-red-900/80 hover:bg-red-800 px-2.5 py-1 text-[11px] font-mono text-white font-bold transition shadow-sm"
               >
@@ -374,7 +383,7 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
       {/* Main Action Button */}
       <button
         type="button"
-        onClick={onEvaluate}
+        onClick={() => onEvaluate()}
         disabled={isLoading}
         className="flex w-full items-center justify-center space-x-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-3 text-xs font-bold text-white transition-all hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyan-900/40 active:scale-[0.98]"
       >

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import type { FieldRequest, FieldResponse, FieldVariable, HealthResponse, VisualizationMode, ActiveTab } from './types/api'
-import { checkHealth, fetchFieldPrediction, fetchReferenceField } from './services/api'
+import { checkHealth, fetchFieldPrediction, fetchReferenceField, pingWakeup } from './services/api'
 import { HeaderBar } from './components/HeaderBar'
 import { QueryControls } from './components/QueryControls'
 import { FieldVisualization } from './components/FieldVisualization'
@@ -8,7 +8,7 @@ import { MetricsFooter } from './components/MetricsFooter'
 import { BenchmarkTab } from './components/BenchmarkTab'
 import { ReproducibilityTab } from './components/ReproducibilityTab'
 import { DiagnosticsTab } from './components/DiagnosticsTab'
-import { Activity, Layers, Award, ShieldCheck, BarChart2, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Activity, Layers, Award, ShieldCheck, BarChart2, AlertTriangle, ExternalLink, Cpu, Sparkles, RefreshCw } from 'lucide-react'
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse>({
@@ -25,6 +25,8 @@ export function App() {
   })
 
   const [isRefreshingHealth, setIsRefreshingHealth] = useState(false)
+  const [isColdStarting, setIsColdStarting] = useState(false)
+  const [coldStartProgress, setColdStartProgress] = useState(0)
   const [activeTab, setActiveTab] = useState<ActiveTab>('field')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,25 +68,63 @@ export function App() {
     }
   }, [])
 
+  // Startup Routine to wake up cold backend containers
   useEffect(() => {
-    refreshHealthStatus()
-    const interval = setInterval(refreshHealthStatus, 15000)
-    return () => clearInterval(interval)
+    let timer: number | null = null
+    let progressTimer: number | null = null
+
+    const runStartupRoutine = async () => {
+      // First attempt a fast ping
+      const isAwake = await pingWakeup()
+      if (!isAwake) {
+        setIsColdStarting(true)
+        let prog = 5
+        setColdStartProgress(prog)
+
+        progressTimer = window.setInterval(() => {
+          prog = Math.min(95, prog + Math.random() * 3 + 1)
+          setColdStartProgress(Math.floor(prog))
+        }, 1000)
+
+        // Poll wakeup until ready or timeout
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 2500))
+          const ready = await pingWakeup()
+          if (ready) {
+            setColdStartProgress(100)
+            break
+          }
+        }
+
+        if (progressTimer) clearInterval(progressTimer)
+        setIsColdStarting(false)
+      }
+      refreshHealthStatus()
+    }
+
+    runStartupRoutine()
+
+    const interval = setInterval(refreshHealthStatus, 20000)
+    return () => {
+      clearInterval(interval)
+      if (progressTimer) clearInterval(progressTimer)
+    }
   }, [refreshHealthStatus])
 
-  const handleEvaluate = useCallback(async () => {
+  const handleEvaluate = useCallback(async (overrideParams?: FieldRequest) => {
+    const activeParams = overrideParams ?? params
     setIsLoading(true)
     setError(null)
     setL2Error(null)
 
     try {
-      const { data, latencyMs: lat } = await fetchFieldPrediction(params)
+      const { data, latencyMs: lat } = await fetchFieldPrediction(activeParams)
       setFieldData(data)
       setLatencyMs(lat)
 
       if (compareMode && health.reference_dataset_available) {
         try {
-          const ref = await fetchReferenceField(params)
+          const ref = await fetchReferenceField(activeParams)
           setRefData(ref)
 
           // Exact mathematical L2 error computation against authentic DNS data
@@ -170,7 +210,51 @@ export function App() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-black">
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-black relative">
+      {/* Cold Start Overlay Modal */}
+      {isColdStarting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl p-6 transition-all duration-300">
+          <div className="max-w-md w-full rounded-2xl border border-cyan-500/40 bg-slate-900/90 p-8 text-center shadow-2xl space-y-5 glass-panel">
+            <div className="relative flex h-20 w-20 mx-auto items-center justify-center rounded-3xl bg-cyan-950/60 border border-cyan-500/50 text-cyan-400 shadow-inner">
+              <Cpu className="h-10 w-10 animate-pulse" />
+              <Sparkles className="h-5 w-5 absolute -top-1 -right-1 text-cyan-300 animate-bounce" />
+            </div>
+            
+            <div className="space-y-2">
+              <h3 className="text-lg font-extrabold text-white font-mono tracking-tight">
+                Spinning up scientific compute engines
+              </h3>
+              <p className="text-xs text-slate-400 font-sans leading-relaxed">
+                Render free-tier instances sleep when idle. Waking up PyTorch autograd compute engines takes ~40 seconds on the first visit...
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="space-y-2 pt-2">
+              <div className="h-2 w-full bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 rounded-full transition-all duration-500 shadow-lg shadow-cyan-500/50"
+                  style={{ width: `${coldStartProgress}%` }}
+                />
+              </div>
+              <div className="flex justify-between items-center text-[11px] font-mono text-slate-500">
+                <span>Connecting to cloud container...</span>
+                <span className="text-cyan-400 font-bold">{coldStartProgress}%</span>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setIsColdStarting(false)}
+                className="text-xs text-slate-500 hover:text-slate-300 font-mono underline"
+              >
+                Dismiss Overlay & Explore Offline Mode
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <HeaderBar
         health={health}
         onRefreshHealth={refreshHealthStatus}

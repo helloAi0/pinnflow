@@ -16,37 +16,42 @@ interface FieldVisualizationProps {
 type ColormapType = 'turbo' | 'viridis' | 'inferno' | 'coolwarm' | 'plasma'
 
 function sampleColor(val: number, min: number, max: number, palette: ColormapType = 'turbo'): [number, number, number] {
-  const norm = max > min ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0.5
+  if (isNaN(val) || !isFinite(val) || isNaN(min) || isNaN(max)) {
+    return [15, 23, 42] // Slate dark fallback to prevent pink rendering
+  }
+
+  const range = max - min
+  const norm = range > 1e-12 ? Math.max(0, Math.min(1, (val - min) / range)) : 0.5
 
   if (palette === 'viridis') {
     const x = norm
     const r = Math.floor(255 * (0.267 + x * (0.005 + x * (0.329 + x * (1.17 - x * 0.77)))))
     const g = Math.floor(255 * (0.004 + x * (1.405 - x * (0.835 + x * (0.505 - x * 0.9)))))
     const b = Math.floor(255 * (0.329 + x * (1.107 - x * (2.813 + x * (2.45 - x * 0.73)))))
-    return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]
+    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
   } else if (palette === 'plasma') {
     const x = norm
     const r = Math.floor(255 * (0.058 + x * (2.55 - x * (1.92 - x * 0.32))))
     const g = Math.floor(255 * (0.015 + x * (0.28 + x * (2.28 - x * 1.57))))
     const b = Math.floor(255 * (0.53 + x * (0.88 - x * (3.14 - x * 1.73))))
-    return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]
+    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
   } else if (palette === 'inferno') {
     const r = Math.floor(255 * Math.pow(norm, 0.7))
     const g = Math.floor(255 * Math.pow(norm, 1.8) * 0.9)
     const b = Math.floor(255 * Math.sin(norm * Math.PI) * 0.5 + 40 * (1 - norm))
-    return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]
+    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
   } else if (palette === 'coolwarm') {
     const r = Math.floor(255 * Math.min(1, Math.max(0, 2 * norm)))
     const b = Math.floor(255 * Math.min(1, Math.max(0, 2 * (1 - norm))))
     const g = Math.floor(255 * (1 - Math.abs(2 * norm - 1)))
-    return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]
+    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
   } else {
     // Turbo
     const x = norm
     const r = Math.floor(255 * (0.1357 + x * (4.5155 + x * (-8.5638 + x * 4.9086))))
     const g = Math.floor(255 * (0.0914 + x * (2.1942 + x * (4.8429 + x * (-14.185 + x * 7.645)))))
     const b = Math.floor(255 * (0.1067 + x * (12.573 + x * (-86.801 + x * (268.86 + x * (-338.63 + x * 153.28))))))
-    return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))]
+    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
   }
 }
 
@@ -364,6 +369,26 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
     vorticity: { label: 'Vorticity', symbol: 'ω', unit: '1/s' }
   }
 
+  const hasValidData = React.useMemo(() => {
+    if (!data || !data.u || !Array.isArray(data.u) || data.u.length === 0 || !data.u[0] || data.u[0].length === 0) {
+      return false
+    }
+    const ny = data.u.length
+    const nx = data.u[0].length
+    let nonZeroFound = false
+    for (let r = 0; r < ny; r++) {
+      for (let c = 0; c < nx; c++) {
+        const val = data.u[r]?.[c]
+        if (val !== undefined && val !== null && !isNaN(val) && Math.abs(val) > 1e-8) {
+          nonZeroFound = true
+          break
+        }
+      }
+      if (nonZeroFound) break
+    }
+    return nonZeroFound
+  }, [data])
+
   return (
     <div ref={containerRef} className="flex flex-col space-y-4 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 backdrop-blur-2xl shadow-2xl glass-panel relative">
       {/* Visual Controls Header Bar */}
@@ -499,6 +524,20 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
               <p className="text-xs font-mono text-slate-300 font-semibold">Scientific Instrument Ready</p>
               <p className="text-[11px] text-slate-500 font-mono mt-0.5 max-w-sm">
                 Configure experiment parameters on the left and click &quot;Evaluate Physical Field&quot; to execute real-time autograd inference.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {data && !hasValidData && !isLoading && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md text-slate-400 space-y-3 text-center px-6 pointer-events-none">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-950/60 border border-amber-800/80 text-amber-400">
+              <Compass className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-sm font-mono text-amber-300 font-bold">No Data / Computation Incomplete</p>
+              <p className="text-xs text-slate-400 font-mono mt-1 max-w-md">
+                The physical field returned all zero or uncomputable values. Please check model weights or reduce grid resolution.
               </p>
             </div>
           </div>
