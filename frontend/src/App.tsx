@@ -222,10 +222,10 @@ export function App() {
             
             <div className="space-y-2">
               <h3 className="text-lg font-extrabold text-white font-mono tracking-tight">
-                Spinning up scientific compute engines
+                Waking up scientific inference engine (cold start takes ~30s)...
               </h3>
               <p className="text-xs text-slate-400 font-sans leading-relaxed">
-                Render free-tier instances sleep when idle. Waking up PyTorch autograd compute engines takes ~40 seconds on the first visit...
+                Render free-tier instances sleep when idle. Initializing PyTorch models and warming up autograd evaluation pipeline...
               </p>
             </div>
 

@@ -7,11 +7,11 @@ export const getApiUrl = (): string => {
     return envUrl.replace(/\/+$/, '')
   }
   
-  // If no environment variable is provided, check if we are running in the browser
+  // When running on non-localhost (e.g. Vercel deployment), point directly to Render production backend
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname
     if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return window.location.origin
+      return 'https://pinnflow.onrender.com'
     }
   }
   
