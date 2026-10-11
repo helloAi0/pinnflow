@@ -72,3 +72,30 @@ def test_api_predict_field_validation():
         assert len(data["u"]) == 10
         assert len(data["u"][0]) == 10
         assert "pde_loss" in data["metrics"]
+
+def test_api_wakeup_head():
+    res = client.head("/api/v1/wakeup")
+    assert res.status_code == 200
+
+def test_api_grid_caps_422():
+    # Exceeds 20000 points without vorticity
+    payload_too_large = {
+        "nx": 200,
+        "ny": 150,  # 30,000 points
+        "t": 10.0,
+        "compute_vorticity": False
+    }
+    res = client.post("/api/v1/predict/field", json=payload_too_large)
+    assert res.status_code == 422
+    assert "exceeds limit" in str(res.json())
+
+    # Exceeds 10000 points with vorticity
+    payload_vort_large = {
+        "nx": 120,
+        "ny": 100,  # 12,000 points
+        "t": 10.0,
+        "compute_vorticity": True
+    }
+    res = client.post("/api/v1/predict/field", json=payload_vort_large)
+    assert res.status_code == 422
+    assert "exceeds limit" in str(res.json())

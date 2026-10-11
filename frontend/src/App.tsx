@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { FieldRequest, FieldResponse, FieldVariable, HealthResponse, VisualizationMode, ActiveTab } from './types/api'
-import { checkHealth, fetchFieldPrediction, fetchReferenceField, pingWakeup } from './services/api'
+import { checkHealth, fetchFieldPrediction, fetchReferenceField, pingWakeup, wakeBackend } from './services/api'
 import { HeaderBar } from './components/HeaderBar'
 import { QueryControls } from './components/QueryControls'
 import { FieldVisualization } from './components/FieldVisualization'
@@ -8,7 +8,9 @@ import { MetricsFooter } from './components/MetricsFooter'
 import { BenchmarkTab } from './components/BenchmarkTab'
 import { ReproducibilityTab } from './components/ReproducibilityTab'
 import { DiagnosticsTab } from './components/DiagnosticsTab'
-import { Activity, Layers, Award, ShieldCheck, BarChart2, AlertTriangle, ExternalLink, Cpu, Sparkles, RefreshCw } from 'lucide-react'
+import { Activity, Layers, Award, ShieldCheck, BarChart2, AlertTriangle, ExternalLink, Cpu, Sparkles } from 'lucide-react'
+
+type BackendState = 'initializing' | 'waking' | 'ready' | 'offline'
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse>({
@@ -24,12 +26,13 @@ export function App() {
     reference_dataset_available: false,
   })
 
+  const [backendState, setBackendState] = useState<BackendState>('initializing')
   const [isRefreshingHealth, setIsRefreshingHealth] = useState(false)
-  const [isColdStarting, setIsColdStarting] = useState(false)
   const [coldStartProgress, setColdStartProgress] = useState(0)
   const [activeTab, setActiveTab] = useState<ActiveTab>('field')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
 
   // Scientific experiment parameters
   const [params, setParams] = useState<FieldRequest>({
@@ -43,12 +46,6 @@ export function App() {
     compute_vorticity: true,
   })
 
-  const [selectedModel, setSelectedModel] = useState<string>('hard_constrained_pinn')
-  const [selectedBudget, setSelectedBudget] = useState<number>(5000)
-  const [selectedNoise, setSelectedNoise] = useState<number>(0.0)
-  const [selectedSplit, setSelectedSplit] = useState<string>('random')
-  const [selectedSeed, setSelectedSeed] = useState<number>(0)
-
   const [fieldData, setFieldData] = useState<FieldResponse | null>(null)
   const [refData, setRefData] = useState<FieldResponse | null>(null)
   const [activeVar, setActiveVar] = useState<FieldVariable>('velocity_magnitude')
@@ -58,103 +55,145 @@ export function App() {
   const [latencyMs, setLatencyMs] = useState<number | null>(null)
   const [l2Error, setL2Error] = useState<number | null>(null)
 
+  const fetchSeqRef = useRef<number>(0)
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   const refreshHealthStatus = useCallback(async () => {
     setIsRefreshingHealth(true)
     try {
       const h = await checkHealth()
       setHealth(h)
+      if (h.status !== 'offline') {
+        setBackendState('ready')
+      }
     } finally {
       setIsRefreshingHealth(false)
     }
   }, [])
 
-  // Startup Routine to wake up cold backend containers
+  // Startup Routine to wake up cold backend containers up to ~100s
   useEffect(() => {
-    let timer: number | null = null
-    let progressTimer: number | null = null
+    let isMounted = true
 
     const runStartupRoutine = async () => {
-      // First attempt a fast ping
+      // First attempt a fast ping to check if instance is already awake
       const isAwake = await pingWakeup()
-      if (!isAwake) {
-        setIsColdStarting(true)
-        let prog = 5
-        setColdStartProgress(prog)
-
-        progressTimer = window.setInterval(() => {
-          prog = Math.min(95, prog + Math.random() * 3 + 1)
-          setColdStartProgress(Math.floor(prog))
-        }, 1000)
-
-        // Poll wakeup until ready or timeout
-        for (let i = 0; i < 20; i++) {
-          await new Promise((r) => setTimeout(r, 2500))
-          const ready = await pingWakeup()
-          if (ready) {
-            setColdStartProgress(100)
-            break
-          }
-        }
-
-        if (progressTimer) clearInterval(progressTimer)
-        setIsColdStarting(false)
+      if (isAwake) {
+        if (!isMounted) return
+        setBackendState('ready')
+        refreshHealthStatus()
+        return
       }
-      refreshHealthStatus()
+
+      // If asleep, enter waking state and poll /api/v1/wakeup up to ~100s
+      if (!isMounted) return
+      setBackendState('waking')
+      setColdStartProgress(5)
+
+      const wokeUp = await wakeBackend((prog) => {
+        if (isMounted) setColdStartProgress(prog)
+      })
+
+      if (!isMounted) return
+      if (wokeUp) {
+        setColdStartProgress(100)
+        setBackendState('ready')
+        refreshHealthStatus()
+      } else {
+        setBackendState('offline')
+        refreshHealthStatus()
+      }
     }
 
     runStartupRoutine()
 
-    const interval = setInterval(refreshHealthStatus, 20000)
+    const interval = setInterval(() => {
+      if (backendState === 'ready') {
+        refreshHealthStatus()
+      }
+    }, 25000)
+
     return () => {
+      isMounted = false
       clearInterval(interval)
-      if (progressTimer) clearInterval(progressTimer)
     }
-  }, [refreshHealthStatus])
+  }, [backendState, refreshHealthStatus])
 
-  const handleEvaluate = useCallback(async (overrideParams?: FieldRequest) => {
-    const activeParams = overrideParams ?? params
-    setIsLoading(true)
-    setError(null)
-    setL2Error(null)
+  // ONE debounced (400ms) auto-fetch effect on [params, compareMode, backendState, isPlaying]
+  // with stale-request cancellation (AbortController + sequence id)
+  // and NO fetch before wake-up completes.
+  useEffect(() => {
+    if (backendState !== 'ready') return
 
-    try {
-      const { data, latencyMs: lat } = await fetchFieldPrediction(activeParams)
-      setFieldData(data)
-      setLatencyMs(lat)
+    const seqId = ++fetchSeqRef.current
 
-      if (compareMode && health.reference_dataset_available) {
-        try {
-          const ref = await fetchReferenceField(activeParams)
-          setRefData(ref)
+    // Abort previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
 
-          // Exact mathematical L2 error computation against authentic DNS data
-          let diffSqSum = 0
-          let refSqSum = 0
-          for (let r = 0; r < data.u.length; r++) {
-            for (let c = 0; c < data.u[0].length; c++) {
-              const uDiff = data.u[r][c] - ref.u[r][c]
-              const vDiff = data.v[r][c] - ref.v[r][c]
-              diffSqSum += uDiff * uDiff + vDiff * vDiff
-              refSqSum += ref.u[r][c] * ref.u[r][c] + ref.v[r][c] * ref.v[r][c]
+    const timer = setTimeout(async () => {
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const { data, latencyMs: lat } = await fetchFieldPrediction(params, controller.signal)
+        if (seqId !== fetchSeqRef.current) return
+
+        setFieldData(data)
+        setLatencyMs(lat)
+
+        // If compare mode is enabled, fetch reference DNS field
+        if (compareMode && health.reference_dataset_available) {
+          try {
+            const ref = await fetchReferenceField(params, controller.signal)
+            if (seqId !== fetchSeqRef.current) return
+            setRefData(ref)
+
+            // Exact mathematical L2 relative error computation
+            let diffSqSum = 0
+            let refSqSum = 0
+            for (let r = 0; r < data.u.length; r++) {
+              for (let c = 0; c < data.u[0].length; c++) {
+                const uDiff = data.u[r][c] - (ref.u[r]?.[c] ?? 0)
+                const vDiff = data.v[r][c] - (ref.v[r]?.[c] ?? 0)
+                diffSqSum += uDiff * uDiff + vDiff * vDiff
+                refSqSum += (ref.u[r]?.[c] ?? 0) ** 2 + (ref.v[r]?.[c] ?? 0) ** 2
+              }
             }
+            const computedL2 = Math.sqrt(diffSqSum / (refSqSum || 1.0))
+            setL2Error(computedL2)
+          } catch {
+            if (controller.signal.aborted || seqId !== fetchSeqRef.current) return
+            setRefData(null)
+            setL2Error(null)
           }
-          const computedL2 = Math.sqrt(diffSqSum / (refSqSum || 1.0))
-          setL2Error(computedL2)
-        } catch {
-          // Reference DNS fetch failed gracefully
+        } else {
+          setRefData(null)
+          setL2Error(null)
+        }
+      } catch (err: unknown) {
+        if (controller.signal.aborted || seqId !== fetchSeqRef.current) return
+        setError(err instanceof Error ? err.message : 'Evaluation query failed')
+      } finally {
+        if (seqId === fetchSeqRef.current) {
+          setIsLoading(false)
         }
       }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Evaluation query failed')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [params, compareMode, health.reference_dataset_available])
+    }, isPlaying ? 250 : 400)
 
-  // Auto-trigger evaluation on initial page load
-  useEffect(() => {
-    handleEvaluate()
-  }, [handleEvaluate])
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [params, compareMode, backendState, isPlaying, health.reference_dataset_available])
+
+  const handleManualEvaluate = useCallback((overrideParams?: FieldRequest) => {
+    if (overrideParams) {
+      setParams(overrideParams)
+    }
+  }, [])
 
   const handleExportFieldCSV = () => {
     if (!fieldData) return
@@ -183,12 +222,8 @@ export function App() {
     if (!fieldData) return
     const exportBundle = {
       timestamp: new Date().toISOString(),
-      model: selectedModel,
+      model: health.architecture || 'hard_constrained_pinn',
       reynolds_number: health.reynolds_number,
-      seed: selectedSeed,
-      budget: selectedBudget,
-      noise: selectedNoise,
-      split: selectedSplit,
       time_snapshot: params.t,
       grid_resolution: `${params.nx}x${params.ny}`,
       relative_l2_error: l2Error,
@@ -212,17 +247,17 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-black relative">
       {/* Cold Start Overlay Modal */}
-      {isColdStarting && (
+      {backendState === 'waking' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl p-6 transition-all duration-300">
           <div className="max-w-md w-full rounded-2xl border border-cyan-500/40 bg-slate-900/90 p-8 text-center shadow-2xl space-y-5 glass-panel">
             <div className="relative flex h-20 w-20 mx-auto items-center justify-center rounded-3xl bg-cyan-950/60 border border-cyan-500/50 text-cyan-400 shadow-inner">
               <Cpu className="h-10 w-10 animate-pulse" />
               <Sparkles className="h-5 w-5 absolute -top-1 -right-1 text-cyan-300 animate-bounce" />
             </div>
-            
+
             <div className="space-y-2">
               <h3 className="text-lg font-extrabold text-white font-mono tracking-tight">
-                Waking up scientific inference engine (cold start takes ~30s)...
+                Waking up scientific inference engine (cold start takes ~30-50s)...
               </h3>
               <p className="text-xs text-slate-400 font-sans leading-relaxed">
                 Render free-tier instances sleep when idle. Initializing PyTorch models and warming up autograd evaluation pipeline...
@@ -245,10 +280,11 @@ export function App() {
 
             <div className="pt-2">
               <button
-                onClick={() => setIsColdStarting(false)}
+                type="button"
+                onClick={() => setBackendState('offline')}
                 className="text-xs text-slate-500 hover:text-slate-300 font-mono underline"
               >
-                Dismiss Overlay & Explore Offline Mode
+                Dismiss Overlay & Explore Standby Mode
               </button>
             </div>
           </div>
@@ -262,7 +298,7 @@ export function App() {
       />
 
       {/* Backend Status Advisory Banner (if backend is booting or offline) */}
-      {health.status === 'offline' && (
+      {backendState === 'offline' && (
         <div className="bg-amber-950/90 border-b border-amber-800/80 px-6 py-2.5 text-xs text-amber-200 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <AlertTriangle className="h-4 w-4 text-amber-400" />
@@ -271,6 +307,7 @@ export function App() {
             </span>
           </div>
           <button
+            type="button"
             onClick={refreshHealthStatus}
             className="underline hover:text-white font-mono text-[11px]"
           >
@@ -283,6 +320,7 @@ export function App() {
       <div className="border-b border-slate-800/80 bg-slate-900/50 px-6 backdrop-blur-md sticky top-[73px] z-20">
         <nav className="flex space-x-6 font-mono text-xs">
           <button
+            type="button"
             onClick={() => { setActiveTab('field'); setVisMode('prediction') }}
             className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'field'
@@ -295,6 +333,7 @@ export function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => { setActiveTab('error_analysis'); setVisMode('absolute_error') }}
             className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'error_analysis'
@@ -307,6 +346,7 @@ export function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('diagnostics')}
             className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'diagnostics'
@@ -319,6 +359,7 @@ export function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('benchmark')}
             className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'benchmark'
@@ -331,6 +372,7 @@ export function App() {
           </button>
 
           <button
+            type="button"
             onClick={() => setActiveTab('reproducibility')}
             className={`flex items-center space-x-2 py-3.5 border-b-2 font-medium transition-all ${
               activeTab === 'reproducibility'
@@ -352,23 +394,16 @@ export function App() {
               <QueryControls
                 params={params}
                 setParams={setParams}
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                selectedBudget={selectedBudget}
-                setSelectedBudget={setSelectedBudget}
-                selectedNoise={selectedNoise}
-                setSelectedNoise={setSelectedNoise}
-                selectedSplit={selectedSplit}
-                setSelectedSplit={setSelectedSplit}
-                selectedSeed={selectedSeed}
-                setSelectedSeed={setSelectedSeed}
-                onEvaluate={handleEvaluate}
+                onEvaluate={handleManualEvaluate}
                 isLoading={isLoading}
                 error={error}
                 compareMode={compareMode}
                 setCompareMode={setCompareMode}
                 onExportField={handleExportFieldCSV}
                 onExportMetrics={handleExportMetricsJSON}
+                health={health}
+                isPlaying={isPlaying}
+                setIsPlaying={setIsPlaying}
               />
             </div>
             <div className="lg:col-span-2">
@@ -381,6 +416,7 @@ export function App() {
                 setVisMode={setVisMode}
                 isLoading={isLoading}
                 compareMode={compareMode}
+                onComputeVorticity={() => setParams((p) => ({ ...p, compute_vorticity: true }))}
               />
             </div>
           </div>

@@ -1,20 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Play, Pause, Sliders, RefreshCw, Download, Sparkles, FastForward, Rewind } from 'lucide-react'
-import type { FieldRequest } from '../types/api'
+import { Play, Pause, Sliders, RefreshCw, Download, Sparkles, FastForward, Rewind, Server } from 'lucide-react'
+import type { FieldRequest, HealthResponse } from '../types/api'
 
 interface QueryControlsProps {
   params: FieldRequest
   setParams: React.Dispatch<React.SetStateAction<FieldRequest>>
-  selectedModel: string
-  setSelectedModel: (m: string) => void
-  selectedBudget: number
-  setSelectedBudget: (b: number) => void
-  selectedNoise: number
-  setSelectedNoise: (n: number) => void
-  selectedSplit: string
-  setSelectedSplit: (s: string) => void
-  selectedSeed: number
-  setSelectedSeed: (s: number) => void
   onEvaluate: (overrideParams?: FieldRequest) => void
   isLoading: boolean
   error: string | null
@@ -22,34 +12,29 @@ interface QueryControlsProps {
   setCompareMode: (c: boolean) => void
   onExportField: () => void
   onExportMetrics: () => void
+  health?: HealthResponse
+  isPlaying: boolean
+  setIsPlaying: (p: boolean) => void
 }
 
 export const QueryControls: React.FC<QueryControlsProps> = ({
   params,
   setParams,
-  selectedModel,
-  setSelectedModel,
-  selectedBudget,
-  setSelectedBudget,
-  selectedNoise,
-  setSelectedNoise,
-  selectedSplit,
-  setSelectedSplit,
-  selectedSeed,
-  setSelectedSeed,
   onEvaluate,
   isLoading,
   error,
   compareMode,
   setCompareMode,
   onExportField,
-  onExportMetrics
+  onExportMetrics,
+  health,
+  isPlaying,
+  setIsPlaying
 }) => {
-  const [isPlaying, setIsPlaying] = useState(false)
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1)
   const animIntervalRef = useRef<number | null>(null)
 
-  // Temporal animation playback loop
+  // Temporal animation playback loop: advances t across frames
   useEffect(() => {
     if (isPlaying) {
       animIntervalRef.current = window.setInterval(() => {
@@ -58,7 +43,7 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
           if (nextT > 19.9) nextT = 0.0
           return { ...prev, t: nextT }
         })
-      }, 300)
+      }, 350)
     } else if (animIntervalRef.current) {
       clearInterval(animIntervalRef.current)
       animIntervalRef.current = null
@@ -85,7 +70,8 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
       setParams(p)
       onEvaluate(p)
     } else if (presetType === 'highres') {
-      const p: FieldRequest = { ...params, nx: 120, ny: 60 }
+      // 140x70 = 9,800 points (within 10,000 point cap with vorticity)
+      const p: FieldRequest = { ...params, nx: 140, ny: 70 }
       setParams(p)
       onEvaluate(p)
     }
@@ -101,7 +87,7 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
         </div>
         <div className="flex items-center space-x-1.5">
           <span className="text-[11px] font-mono text-cyan-400 bg-cyan-950/80 px-2.5 py-0.5 rounded-md border border-cyan-800 font-bold">
-            Re = 100.0
+            Re = {health?.reynolds_number ?? 100.0}
           </span>
         </div>
       </div>
@@ -113,7 +99,7 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
             <span>Backend Notice / Error</span>
           </div>
           <p className="font-mono text-[11px] text-red-200 leading-relaxed">{error}</p>
-          {(error.includes('502') || error.includes('memory') || error.includes('OOM') || error.includes('timed out') || error.includes('Resolution')) && (
+          {(error.includes('502') || error.includes('memory') || error.includes('OOM') || error.includes('timed out') || error.includes('limit') || error.includes('exceeds')) && (
             <div className="flex flex-wrap gap-2 pt-1 border-t border-red-900/60">
               <button
                 type="button"
@@ -171,87 +157,37 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
         </div>
       </div>
 
-      {/* Model Selection */}
-      <div className="space-y-1.5">
-        <label className="text-xs font-medium text-slate-300 flex justify-between">
-          <span>Surrogate Model Architecture</span>
-          <span className="text-[10px] text-cyan-400 font-mono">PyTorch 2.x</span>
-        </label>
-        <select
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-mono shadow-inner"
-        >
-          <option value="hard_constrained_pinn">Fourier Hard-Constrained PINN (Canonical Production)</option>
-          <option value="fourier_pinn">Fourier Feature PINN (Tancik / Wang 2021)</option>
-          <option value="adaptive_pinn">Homoscedastic Adaptive PINN (Kendall 2018)</option>
-          <option value="static_pinn">Standard Static PINN (Raissi 2019)</option>
-          <option value="baseline_mlp">Data-Only MLP Baseline (No Physics)</option>
-        </select>
-      </div>
-
-      {/* Observation Budget & Noise */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-300">Observation Budget</label>
-          <select
-            value={selectedBudget}
-            onChange={(e) => setSelectedBudget(Number(e.target.value))}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none font-mono"
-          >
-            <option value={500}>500 pts (Extreme)</option>
-            <option value={1000}>1,000 pts</option>
-            <option value={2500}>2,500 pts</option>
-            <option value={5000}>5,000 pts (Standard)</option>
-            <option value={10000}>10,000 pts</option>
-          </select>
+      {/* READ-ONLY SERVED MODEL PANEL (Replaces the obsolete dropdowns) */}
+      <div className="space-y-2 rounded-xl bg-slate-950/90 p-3.5 border border-cyan-900/60 shadow-inner">
+        <div className="flex items-center justify-between text-xs font-semibold text-slate-200 border-b border-slate-800/80 pb-2">
+          <div className="flex items-center space-x-1.5 text-cyan-400">
+            <Server className="h-3.5 w-3.5" />
+            <span>Served Model (Production Checkpoint)</span>
+          </div>
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+            {health?.trained ? 'Active' : 'Standby'}
+          </span>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-300">Observation Noise</label>
-          <select
-            value={selectedNoise}
-            onChange={(e) => setSelectedNoise(Number(e.target.value))}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none font-mono"
-          >
-            <option value={0.0}>0% (Clean DNS)</option>
-            <option value={0.01}>1% Noise</option>
-            <option value={0.05}>5% Noise</option>
-            <option value={0.10}>10% Noise</option>
-            <option value={0.20}>20% Noise</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Split Protocol & Seed */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-300">Evaluation Split</label>
-          <select
-            value={selectedSplit}
-            onChange={(e) => setSelectedSplit(e.target.value)}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none font-mono"
-          >
-            <option value="random">Random Spatio-Temporal</option>
-            <option value="sensor">Unseen Sensor Locations</option>
-            <option value="temporal">Temporal Future Holdout</option>
-          </select>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-slate-300">Training Seed</label>
-          <select
-            value={selectedSeed}
-            onChange={(e) => setSelectedSeed(Number(e.target.value))}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-200 focus:border-cyan-500 focus:outline-none font-mono"
-          >
-            <option value={0}>Seed 0</option>
-            <option value={1}>Seed 1</option>
-            <option value={2}>Seed 2</option>
-            <option value={3}>Seed 3</option>
-            <option value={4}>Seed 4</option>
-            <option value={42}>Seed 42</option>
-          </select>
+        <div className="space-y-1.5 text-[11px] font-mono text-slate-300 pt-1">
+          <div className="flex justify-between">
+            <span className="text-slate-500">Architecture:</span>
+            <span className="text-slate-200 font-medium">Fourier Hard-Constrained PINN</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Weights File:</span>
+            <span className="text-cyan-300 truncate max-w-[170px]" title={health?.checkpoint_name || 'final_pinn_model.pth'}>
+              {health?.checkpoint_name || 'final_pinn_model.pth'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Boundary Guard:</span>
+            <span className="text-slate-200">Exact Solid-Wall No-Slip (R=0.5)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Execution Hardware:</span>
+            <span className="text-slate-200">CPU Single Thread (512MB RAM Cap)</span>
+          </div>
         </div>
       </div>
 
@@ -331,29 +267,34 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
         </div>
       </div>
 
-      {/* Resolution Grid Inputs */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <label className="text-xs text-slate-300 font-mono">nx (columns)</label>
-          <input
-            type="number"
-            min="10"
-            max="200"
-            value={params.nx}
-            onChange={(e) => setParams((prev) => ({ ...prev, nx: parseInt(e.target.value) || 100 }))}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
-          />
+      {/* Resolution Grid Inputs (with point cap limit indicator) */}
+      <div className="space-y-1">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs text-slate-300 font-mono">nx (columns)</label>
+            <input
+              type="number"
+              min="10"
+              max="200"
+              value={params.nx}
+              onChange={(e) => setParams((prev) => ({ ...prev, nx: parseInt(e.target.value) || 100 }))}
+              className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs text-slate-300 font-mono">ny (rows)</label>
+            <input
+              type="number"
+              min="10"
+              max="200"
+              value={params.ny}
+              onChange={(e) => setParams((prev) => ({ ...prev, ny: parseInt(e.target.value) || 50 }))}
+              className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
+            />
+          </div>
         </div>
-        <div className="space-y-1">
-          <label className="text-xs text-slate-300 font-mono">ny (rows)</label>
-          <input
-            type="number"
-            min="10"
-            max="200"
-            value={params.ny}
-            onChange={(e) => setParams((prev) => ({ ...prev, ny: parseInt(e.target.value) || 50 }))}
-            className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
-          />
+        <div className="text-[10px] font-mono text-slate-500 text-right pt-0.5">
+          Grid: {params.nx * params.ny} points (Cap: {params.compute_vorticity ? '10,000 pts' : '20,000 pts'})
         </div>
       </div>
 

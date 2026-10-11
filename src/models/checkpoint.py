@@ -95,20 +95,63 @@ def load_and_validate_checkpoint(
     elif isinstance(raw_bundle, dict):
         # Legacy raw state_dict fallback - inspect keys to infer architecture
         state_dict = raw_bundle
-        if any(k.startswith("hidden_layers") for k in state_dict.keys()) or "B" in state_dict:
+        has_hidden_layers = any(k.startswith("hidden_layers") for k in state_dict.keys())
+        has_b = "B" in state_dict
+        has_mlp = any(k.startswith("mlp") for k in state_dict.keys())
+
+        if has_hidden_layers and has_b:
+            # Map legacy hidden_layers.X and output_layer to mlp.2X
+            num_hidden = sum(1 for k in state_dict.keys() if k.startswith("hidden_layers") and k.endswith(".weight"))
+            hidden_dim = state_dict["hidden_layers.0.weight"].shape[0]
+            fourier_features = state_dict["B"].shape[1]
+
+            mapped_sd = {"B": state_dict["B"]}
+            for i in range(num_hidden):
+                w_key = f"hidden_layers.{i}.weight"
+                b_key = f"hidden_layers.{i}.bias"
+                if w_key in state_dict:
+                    mapped_sd[f"mlp.{2*i}.weight"] = state_dict[w_key]
+                if b_key in state_dict:
+                    mapped_sd[f"mlp.{2*i}.bias"] = state_dict[b_key]
+            if "output_layer.weight" in state_dict:
+                mapped_sd[f"mlp.{2*num_hidden}.weight"] = state_dict["output_layer.weight"]
+            if "output_layer.bias" in state_dict:
+                mapped_sd[f"mlp.{2*num_hidden}.bias"] = state_dict["output_layer.bias"]
+
+            state_dict = mapped_sd
             inferred_arch = "hard_constrained_pinn"
-        elif any(k.startswith("mlp") for k in state_dict.keys()):
+            model_config = {
+                "architecture": inferred_arch,
+                "hidden_layers": num_hidden,
+                "hidden_dim": hidden_dim,
+                "fourier_features": fourier_features
+            }
+        elif has_b or has_mlp:
             inferred_arch = "hard_constrained_pinn"
+            # Infer hidden_dim and hidden_layers if mlp keys present
+            if has_mlp and "mlp.0.weight" in state_dict:
+                hidden_dim = state_dict["mlp.0.weight"].shape[0]
+                num_layers = sum(1 for k in state_dict.keys() if k.startswith("mlp.") and k.endswith(".weight"))
+                fourier_features = state_dict["B"].shape[1] if has_b else 64
+                model_config = {
+                    "architecture": inferred_arch,
+                    "hidden_layers": num_layers - 1,
+                    "hidden_dim": hidden_dim,
+                    "fourier_features": fourier_features
+                }
+            else:
+                model_config = {"architecture": inferred_arch}
         else:
             inferred_arch = "standard_mlp"
+            model_config = {"architecture": inferred_arch}
+
         metadata = {
             "version": "1.0.0-legacy",
             "git_commit": "legacy_checkpoint",
             "training_seed": 42,
             "reynolds_number": physics_config.reynolds_number,
-            "model_config": {"architecture": inferred_arch}
+            "model_config": model_config
         }
-        model_config = metadata["model_config"]
     else:
         return False, None, {}, "Unrecognized checkpoint structure."
 
@@ -130,7 +173,6 @@ def load_and_validate_checkpoint(
 
     # Check for missing keys (excluding non-trainable buffers that might be reconstructed)
     missing_keys = model_keys - ckpt_keys
-    unexpected_keys = ckpt_keys - model_keys
 
     # Filter out known buffer differences if applicable
     if missing_keys and not all(k.startswith("B") for k in missing_keys):

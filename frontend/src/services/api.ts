@@ -6,7 +6,7 @@ export const getApiUrl = (): string => {
   if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
     return envUrl.replace(/\/+$/, '')
   }
-  
+
   // When running on non-localhost (e.g. Vercel deployment), point directly to Render production backend
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname
@@ -14,7 +14,7 @@ export const getApiUrl = (): string => {
       return 'https://pinnflow.onrender.com'
     }
   }
-  
+
   // Default fallback for local development
   return 'http://localhost:8000'
 }
@@ -22,9 +22,44 @@ export const getApiUrl = (): string => {
 const API_URL = getApiUrl()
 
 /**
- * Robust fetch wrapper with 60,000ms timeout and exponential backoff retry logic.
+ * Format FastAPI 422 validation detail arrays or generic errors into human-readable text.
  */
-export async function fetchWithTimeoutAndRetry(
+export async function formatResponseError(res: Response, defaultMsg = 'Request failed'): Promise<string> {
+  if (res.status === 502) {
+    return 'Backend memory limit exceeded (512MB RAM OOM / HTTP 502 Bad Gateway). Reduce grid resolution (nx / ny) or disable vorticity.'
+  }
+  if (res.status === 504) {
+    return 'Backend request timed out (HTTP 504 Gateway Timeout). Render service may still be waking up. Please retry in a few moments.'
+  }
+
+  try {
+    const data = await res.json()
+    if (data && data.detail) {
+      if (Array.isArray(data.detail)) {
+        // FastAPI 422 validation errors array
+        return data.detail
+          .map((item: { loc?: (string | number)[]; msg?: string }) => {
+            const field = item.loc ? item.loc.filter((part) => part !== 'body').join('.') : ''
+            const prefix = field ? `${field}: ` : ''
+            return `${prefix}${item.msg || 'Invalid input'}`
+          })
+          .join('; ')
+      } else if (typeof data.detail === 'string') {
+        return data.detail
+      }
+    }
+  } catch {
+    // Non-JSON error body fallback
+  }
+
+  return `${defaultMsg} (HTTP ${res.status})`
+}
+
+/**
+ * Robust fetch wrapper with exponential backoff on network errors, 502, 503, 504,
+ * timeout management, and full AbortSignal pass-through support.
+ */
+export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
   maxRetries = 2,
@@ -33,8 +68,19 @@ export async function fetchWithTimeoutAndRetry(
   let lastError: unknown = null
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // If external caller signal was already aborted, throw immediately
+    if (options.signal?.aborted) {
+      throw new DOMException('Request aborted by caller', 'AbortError')
+    }
+
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+    // Bridge caller signal to our controller
+    const onCallerAbort = () => controller.abort()
+    if (options.signal) {
+      options.signal.addEventListener('abort', onCallerAbort)
+    }
 
     try {
       const res = await fetch(url, {
@@ -43,15 +89,18 @@ export async function fetchWithTimeoutAndRetry(
         signal: controller.signal
       })
       clearTimeout(timer)
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onCallerAbort)
+      }
 
-      // If response is successful or client-side 4xx (not 502/504), return immediately
+      // 4xx errors (except 408 / 429) should NOT be retried
       if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 408)) {
         return res
       }
 
-      // If server returned 502 / 504 / 503, retry on remaining attempts
-      if (attempt < maxRetries && (res.status === 502 || res.status === 504 || res.status === 503)) {
-        const delay = 2000 * Math.pow(1.5, attempt)
+      // Retry on transient server errors (502, 503, 504)
+      if (attempt < maxRetries && (res.status === 502 || res.status === 503 || res.status === 504)) {
+        const delay = 1500 * Math.pow(1.5, attempt)
         await new Promise((r) => setTimeout(r, delay))
         continue
       }
@@ -59,10 +108,19 @@ export async function fetchWithTimeoutAndRetry(
       return res
     } catch (err: unknown) {
       clearTimeout(timer)
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onCallerAbort)
+      }
+
+      // If aborted by caller, rethrow immediately without retrying
+      if (options.signal?.aborted) {
+        throw err
+      }
+
       lastError = err
 
       if (attempt < maxRetries) {
-        const delay = 2000 * Math.pow(1.5, attempt)
+        const delay = 1500 * Math.pow(1.5, attempt)
         await new Promise((r) => setTimeout(r, delay))
       }
     }
@@ -70,43 +128,60 @@ export async function fetchWithTimeoutAndRetry(
 
   if (lastError instanceof Error && lastError.name === 'AbortError') {
     throw new Error(
-      'Request timed out (60s limit). If using free-tier Render, the backend server may still be spinning up. Please try again in 10-20 seconds.'
+      'Request timed out (60s limit). Free-tier Render server may still be spinning up. Please try again in 10-20 seconds.'
     )
   }
 
   throw lastError || new Error('Network connection failed.')
 }
 
+// Backward compatibility alias
+export const fetchWithTimeoutAndRetry = fetchWithRetry
+
 /**
- * Helper to parse backend error responses and format actionable messages
+ * Polls GET /api/v1/wakeup up to ~100s until instance responds.
  */
-async function handleResponseError(res: Response, defaultMessage: string): Promise<never> {
-  if (res.status === 502) {
-    throw new Error(
-      'Backend memory limit exceeded (512MB RAM OOM / HTTP 502 Bad Gateway). The container is restarting. Please reduce the grid resolution (nx / ny) or evaluate a smaller window.'
-    )
-  }
-  if (res.status === 504) {
-    throw new Error(
-      'Backend request timed out (HTTP 504 Gateway Timeout). Render service may still be waking up. Please retry in a few moments.'
-    )
-  }
-  if (res.status === 503) {
-    const errJson = await res.json().catch(() => null)
-    throw new Error(errJson?.detail ?? 'PINNFlow service initializing. Checkpoint calibrating or service not ready.')
+export async function wakeBackend(
+  onProgress?: (progress: number) => void,
+  maxAttempts = 50,
+  intervalMs = 2000
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const progress = Math.min(98, Math.round((attempt / maxAttempts) * 100))
+    if (onProgress) onProgress(progress)
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/wakeup`, {
+        method: 'GET',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(6000)
+      })
+      if (res.ok) {
+        if (onProgress) onProgress(100)
+        return true
+      }
+    } catch {
+      // Continue polling until deadline
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, intervalMs))
+    }
   }
 
-  const errJson = await res.json().catch(() => null)
-  const errDetail = errJson?.detail ?? `${defaultMessage} (HTTP ${res.status})`
-  throw new Error(errDetail)
+  return false
 }
 
 /**
- * Lightweight ping to trigger cold-start wakeup on Render
+ * Lightweight ping to check if backend is already awake.
  */
 export async function pingWakeup(): Promise<boolean> {
   try {
-    const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/wakeup`, { method: 'GET' }, 1, 15000)
+    const res = await fetch(`${API_URL}/api/v1/wakeup`, {
+      method: 'GET',
+      credentials: 'omit',
+      signal: AbortSignal.timeout(4000)
+    })
     return res.ok
   } catch {
     return false
@@ -114,24 +189,23 @@ export async function pingWakeup(): Promise<boolean> {
 }
 
 /**
- * Robust health check with exponential backoff to tolerate Render 50s cold-start spin-ups
+ * Health check with exponential backoff.
  */
-export async function checkHealth(maxRetries = 3, initialDelayMs = 1500): Promise<HealthResponse> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+export async function checkHealth(maxRetries = 2, initialDelayMs = 1500): Promise<HealthResponse> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/health`, { method: 'GET' }, 0, 20000)
+      const res = await fetchWithRetry(`${API_URL}/api/v1/health`, { method: 'GET' }, 0, 15000)
       if (res.ok) {
         return await res.json()
       }
     } catch {
-      if (attempt < maxRetries - 1) {
+      if (attempt < maxRetries) {
         const delay = initialDelayMs * Math.pow(1.5, attempt)
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
     }
   }
 
-  // Graceful offline state
   return {
     status: 'offline',
     trained: false,
@@ -148,7 +222,7 @@ export async function checkHealth(maxRetries = 3, initialDelayMs = 1500): Promis
 
 export async function fetchMetadata(): Promise<MetadataResponse | null> {
   try {
-    const res = await fetchWithTimeoutAndRetry(`${API_URL}/api/v1/metadata`, { method: 'GET' }, 1, 15000)
+    const res = await fetchWithRetry(`${API_URL}/api/v1/metadata`, { method: 'GET' }, 1, 15000)
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -157,22 +231,25 @@ export async function fetchMetadata(): Promise<MetadataResponse | null> {
 }
 
 export async function fetchFieldPrediction(
-  payload: FieldRequest
+  payload: FieldRequest,
+  signal?: AbortSignal
 ): Promise<{ data: FieldResponse; latencyMs: number }> {
   const start = performance.now()
-  const res = await fetchWithTimeoutAndRetry(
+  const res = await fetchWithRetry(
     `${API_URL}/api/v1/predict/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     },
     2,
     60000
   )
 
   if (!res.ok) {
-    await handleResponseError(res, 'Field Prediction Failed')
+    const errorText = await formatResponseError(res, 'Field Prediction Failed')
+    throw new Error(errorText)
   }
 
   const data: FieldResponse = await res.json()
@@ -181,45 +258,49 @@ export async function fetchFieldPrediction(
 }
 
 export async function fetchReferenceField(
-  payload: FieldRequest
+  payload: FieldRequest,
+  signal?: AbortSignal
 ): Promise<FieldResponse> {
-  const res = await fetchWithTimeoutAndRetry(
+  const res = await fetchWithRetry(
     `${API_URL}/api/v1/reference/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     },
     2,
     60000
   )
 
   if (!res.ok) {
-    await handleResponseError(res, 'Reference Dataset Unavailable')
+    const errorText = await formatResponseError(res, 'Reference Dataset Unavailable')
+    throw new Error(errorText)
   }
 
   return await res.json()
 }
 
 export async function fetchPointPrediction(
-  payload: PointRequest
+  payload: PointRequest,
+  signal?: AbortSignal
 ): Promise<PointResponse> {
-  const res = await fetchWithTimeoutAndRetry(
+  const res = await fetchWithRetry(
     `${API_URL}/api/v1/predict/point`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     },
     1,
     20000
   )
 
   if (!res.ok) {
-    await handleResponseError(res, 'Point Prediction Error')
+    const errorText = await formatResponseError(res, 'Point Prediction Error')
+    throw new Error(errorText)
   }
 
   return await res.json()
 }
-
-

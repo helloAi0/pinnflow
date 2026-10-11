@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
-import { Compass, Crosshair, Camera } from 'lucide-react'
+import { Crosshair, Camera, AlertCircle, RefreshCw, Cpu, Layers } from 'lucide-react'
 import type { FieldResponse, FieldVariable, VisualizationMode } from '../types/api'
+import { ColormapType, sampleColormapLUT } from '../lib/colormaps'
 
 interface FieldVisualizationProps {
   data: FieldResponse | null
@@ -11,48 +12,7 @@ interface FieldVisualizationProps {
   setVisMode: (m: VisualizationMode) => void
   isLoading: boolean
   compareMode: boolean
-}
-
-type ColormapType = 'turbo' | 'viridis' | 'inferno' | 'coolwarm' | 'plasma'
-
-function sampleColor(val: number, min: number, max: number, palette: ColormapType = 'turbo'): [number, number, number] {
-  if (isNaN(val) || !isFinite(val) || isNaN(min) || isNaN(max)) {
-    return [15, 23, 42] // Slate dark fallback to prevent pink rendering
-  }
-
-  const range = max - min
-  const norm = range > 1e-12 ? Math.max(0, Math.min(1, (val - min) / range)) : 0.5
-
-  if (palette === 'viridis') {
-    const x = norm
-    const r = Math.floor(255 * (0.267 + x * (0.005 + x * (0.329 + x * (1.17 - x * 0.77)))))
-    const g = Math.floor(255 * (0.004 + x * (1.405 - x * (0.835 + x * (0.505 - x * 0.9)))))
-    const b = Math.floor(255 * (0.329 + x * (1.107 - x * (2.813 + x * (2.45 - x * 0.73)))))
-    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
-  } else if (palette === 'plasma') {
-    const x = norm
-    const r = Math.floor(255 * (0.058 + x * (2.55 - x * (1.92 - x * 0.32))))
-    const g = Math.floor(255 * (0.015 + x * (0.28 + x * (2.28 - x * 1.57))))
-    const b = Math.floor(255 * (0.53 + x * (0.88 - x * (3.14 - x * 1.73))))
-    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
-  } else if (palette === 'inferno') {
-    const r = Math.floor(255 * Math.pow(norm, 0.7))
-    const g = Math.floor(255 * Math.pow(norm, 1.8) * 0.9)
-    const b = Math.floor(255 * Math.sin(norm * Math.PI) * 0.5 + 40 * (1 - norm))
-    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
-  } else if (palette === 'coolwarm') {
-    const r = Math.floor(255 * Math.min(1, Math.max(0, 2 * norm)))
-    const b = Math.floor(255 * Math.min(1, Math.max(0, 2 * (1 - norm))))
-    const g = Math.floor(255 * (1 - Math.abs(2 * norm - 1)))
-    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
-  } else {
-    // Turbo
-    const x = norm
-    const r = Math.floor(255 * (0.1357 + x * (4.5155 + x * (-8.5638 + x * 4.9086))))
-    const g = Math.floor(255 * (0.0914 + x * (2.1942 + x * (4.8429 + x * (-14.185 + x * 7.645)))))
-    const b = Math.floor(255 * (0.1067 + x * (12.573 + x * (-86.801 + x * (268.86 + x * (-338.63 + x * 153.28))))))
-    return [Math.max(0, Math.min(255, r || 0)), Math.max(0, Math.min(255, g || 0)), Math.max(0, Math.min(255, b || 0))]
-  }
+  onComputeVorticity?: () => void
 }
 
 interface ProbeInfo {
@@ -74,7 +34,9 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
   setActiveVar,
   visMode,
   setVisMode,
-  isLoading
+  isLoading,
+  compareMode: _compareMode,
+  onComputeVorticity
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -87,46 +49,101 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
   const [pinnedProbe, setPinnedProbe] = useState<ProbeInfo | null>(null)
   const [hoverInside, setHoverInside] = useState(false)
 
+  // Determine which grid of data to render based on active mode
+  const getActiveGrid = useCallback((): { grid: number[][]; hasNaN: boolean; isUniform: boolean } | null => {
+    if (!data) return null
+
+    let target: number[][] = []
+    if (visMode === 'prediction') {
+      if (activeVar === 'u') target = data.u
+      else if (activeVar === 'v') target = data.v
+      else if (activeVar === 'p') target = data.p
+      else if (activeVar === 'vorticity') target = data.vorticity ?? []
+      else target = data.velocity_magnitude
+    } else if (visMode === 'reference') {
+      if (!refData) return null
+      if (activeVar === 'u') target = refData.u
+      else if (activeVar === 'v') target = refData.v
+      else if (activeVar === 'p') target = refData.p
+      else if (activeVar === 'vorticity') target = refData.vorticity ?? []
+      else target = refData.velocity_magnitude
+    } else if (visMode === 'absolute_error') {
+      if (!refData) return null
+      const pGrid = activeVar === 'u' ? data.u : (activeVar === 'v' ? data.v : (activeVar === 'p' ? data.p : (activeVar === 'vorticity' ? data.vorticity : data.velocity_magnitude)))
+      const rGrid = activeVar === 'u' ? refData.u : (activeVar === 'v' ? refData.v : (activeVar === 'p' ? refData.p : (activeVar === 'vorticity' ? refData.vorticity : refData.velocity_magnitude)))
+      if (!pGrid || !rGrid) return null
+
+      target = pGrid.map((row, r) =>
+        row.map((val, c) => Math.abs(val - (rGrid[r]?.[c] ?? val)))
+      )
+    } else {
+      // PDE Residual
+      target = data.u.map((row) => row.map(() => data.metrics.pde_loss))
+    }
+
+    if (!target || target.length === 0 || !target[0] || target[0].length === 0) {
+      return null
+    }
+
+    let min = Infinity
+    let max = -Infinity
+    let hasNaN = false
+    for (let r = 0; r < target.length; r++) {
+      for (let c = 0; c < target[0].length; c++) {
+        const val = target[r][c]
+        if (isNaN(val) || !isFinite(val)) {
+          hasNaN = true
+        } else {
+          if (val < min) min = val
+          if (val > max) max = val
+        }
+      }
+    }
+
+    const isUniform = !hasNaN && Math.abs(max - min) < 1e-12
+    return { grid: target, hasNaN, isUniform }
+  }, [data, refData, activeVar, visMode])
+
+  // Canvas rendering with HiDPI canvas sizing + bilinear interpolation + LUT sampling
   const renderCanvas = useCallback(() => {
-    if (!canvasRef.current || !data) return
     const canvas = canvasRef.current
+    const container = containerRef.current
+    if (!canvas || !container) return
+
+    const activeInfo = getActiveGrid()
+    if (!activeInfo || activeInfo.grid.length === 0) return
+
+    const { grid } = activeInfo
+    const ny = grid.length
+    const nx = grid[0].length
+    if (ny < 2 || nx < 2) return
+
+    // Sized to container x devicePixelRatio
+    const rect = container.getBoundingClientRect()
+    const dpr = Math.max(1, window.devicePixelRatio || 1)
+    const targetWidth = Math.round(rect.width * dpr)
+    const targetHeight = Math.round(rect.height * dpr)
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+      canvas.width = targetWidth
+      canvas.height = targetHeight
+    }
+
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    let gridToRender: number[][] = []
+    const width = canvas.width
+    const height = canvas.height
 
-    if (visMode === 'prediction') {
-      if (activeVar === 'u') gridToRender = data.u
-      else if (activeVar === 'v') gridToRender = data.v
-      else if (activeVar === 'p') gridToRender = data.p
-      else if (activeVar === 'vorticity') gridToRender = data.vorticity ?? data.u
-      else gridToRender = data.velocity_magnitude
-    } else if (visMode === 'reference' && refData) {
-      if (activeVar === 'u') gridToRender = refData.u
-      else if (activeVar === 'v') gridToRender = refData.v
-      else if (activeVar === 'p') gridToRender = refData.p
-      else if (activeVar === 'vorticity') gridToRender = refData.vorticity ?? refData.u
-      else gridToRender = refData.velocity_magnitude
-    } else if (visMode === 'absolute_error' && refData) {
-      const pGrid = activeVar === 'u' ? data.u : (activeVar === 'v' ? data.v : (activeVar === 'p' ? data.p : data.velocity_magnitude))
-      const rGrid = activeVar === 'u' ? refData.u : (activeVar === 'v' ? refData.v : (activeVar === 'p' ? refData.p : refData.velocity_magnitude))
-      gridToRender = pGrid.map((row, r) => row.map((val, c) => Math.abs(val - (rGrid[r]?.[c] ?? val))))
-    } else {
-      gridToRender = data.u.map((row) => row.map(() => data.metrics.pde_loss))
-    }
-
-    const ny = gridToRender.length
-    const nx = gridToRender[0]?.length || 0
-    if (ny === 0 || nx === 0) return
-
+    // Compute min / max / mean
     let min = Infinity
     let max = -Infinity
     let sum = 0
     let count = 0
     for (let r = 0; r < ny; r++) {
       for (let c = 0; c < nx; c++) {
-        const v = gridToRender[r][c]
-        if (!isNaN(v)) {
+        const v = grid[r][c]
+        if (!isNaN(v) && isFinite(v)) {
           if (v < min) min = v
           if (v > max) max = v
           sum += v
@@ -134,41 +151,65 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
         }
       }
     }
-    setStats({ min, max, mean: count > 0 ? sum / count : 0 })
 
-    const width = canvas.width
-    const height = canvas.height
+    setStats({
+      min: isFinite(min) ? min : 0,
+      max: isFinite(max) ? max : 1,
+      mean: count > 0 ? sum / count : 0
+    })
+
     const imgData = ctx.createImageData(width, height)
+    const dataBuf = imgData.data
 
+    // High-performance bilinear interpolation across grid cells
     for (let py = 0; py < height; py++) {
-      const gy = Math.floor(((height - 1 - py) / height) * ny)
-      for (let px = 0; px < width; px++) {
-        const gx = Math.floor((px / width) * nx)
-        const val = gridToRender[gy]?.[gx] ?? 0
-        const [r, g, b] = sampleColor(val, min, max, colormap)
+      // Invert Y so bottom is y_min and top is y_max
+      const gyNorm = ((height - 1 - py) / (height - 1)) * (ny - 1)
+      const gy0 = Math.floor(gyNorm)
+      const gy1 = Math.min(gy0 + 1, ny - 1)
+      const fy = gyNorm - gy0
 
+      for (let px = 0; px < width; px++) {
+        const gxNorm = (px / (width - 1)) * (nx - 1)
+        const gx0 = Math.floor(gxNorm)
+        const gx1 = Math.min(gx0 + 1, nx - 1)
+        const fx = gxNorm - gx0
+
+        // Bilinear interpolation
+        const v00 = grid[gy0]?.[gx0] ?? 0
+        const v10 = grid[gy0]?.[gx1] ?? 0
+        const v01 = grid[gy1]?.[gx0] ?? 0
+        const v11 = grid[gy1]?.[gx1] ?? 0
+
+        const interpVal = (1 - fx) * (1 - fy) * v00 +
+                          fx * (1 - fy) * v10 +
+                          (1 - fx) * fy * v01 +
+                          fx * fy * v11
+
+        const [r, g, b] = sampleColormapLUT(interpVal, min, max, colormap)
         const idx = (py * width + px) * 4
-        imgData.data[idx] = r
-        imgData.data[idx + 1] = g
-        imgData.data[idx + 2] = b
-        imgData.data[idx + 3] = 255
+        dataBuf[idx] = r
+        dataBuf[idx + 1] = g
+        dataBuf[idx + 2] = b
+        dataBuf[idx + 3] = 255
       }
     }
+
     ctx.putImageData(imgData, 0, 0)
 
-    // Grid Lines Overlay
+    // Optional Grid Lines Overlay
     if (showGridLines) {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)'
-      ctx.lineWidth = 1
+      ctx.lineWidth = 1 * dpr
       const stepX = width / 12
       const stepY = height / 6
-      for (let x = 0; x < width; x += stepX) {
+      for (let x = 0; x <= width; x += stepX) {
         ctx.beginPath()
         ctx.moveTo(x, 0)
         ctx.lineTo(x, height)
         ctx.stroke()
       }
-      for (let y = 0; y < height; y += stepY) {
+      for (let y = 0; y <= height; y += stepY) {
         ctx.beginPath()
         ctx.moveTo(0, y)
         ctx.lineTo(width, y)
@@ -176,18 +217,18 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
       }
     }
 
-    // Streamline Trajectory Traces
+    // Optional Streamlines Overlay
     if (showStreamlines && data) {
-      ctx.lineWidth = 1.2
+      ctx.lineWidth = 1.3 * dpr
       const numLines = 14
       for (let i = 0; i < numLines; i++) {
         let curY = ((i + 0.5) / numLines) * (ny - 1)
         let curX = 0
         ctx.beginPath()
-        ctx.strokeStyle = `rgba(255, 255, 255, ${0.12 + (i % 3) * 0.05})`
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.15 + (i % 3) * 0.06})`
 
-        const startPx = (curX / nx) * width
-        const startPy = height - (curY / ny) * height
+        const startPx = (curX / (nx - 1)) * width
+        const startPy = height - (curY / (ny - 1)) * height
         ctx.moveTo(startPx, startPy)
 
         for (let step = 0; step < 80; step++) {
@@ -202,23 +243,23 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
 
           if (curX >= nx - 1 || curY < 0 || curY >= ny - 1) break
 
-          const px = (curX / nx) * width
-          const py = height - (curY / ny) * height
+          const px = (curX / (nx - 1)) * width
+          const py = height - (curY / (ny - 1)) * height
           ctx.lineTo(px, py)
         }
         ctx.stroke()
       }
     }
 
-    // Velocity Vector Quivers Overlay
+    // Optional Velocity Quiver Vectors
     if (showVectors && data) {
       const sampleStrideX = Math.max(1, Math.floor(nx / 24))
       const sampleStrideY = Math.max(1, Math.floor(ny / 12))
-      const maxLen = 14
+      const maxLen = 14 * dpr
 
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)'
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
       ctx.fillStyle = '#06b6d4'
-      ctx.lineWidth = 1.3
+      ctx.lineWidth = 1.3 * dpr
 
       for (let gy = 0; gy < ny; gy += sampleStrideY) {
         for (let gx = 0; gx < nx; gx += sampleStrideX) {
@@ -226,11 +267,11 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
           const vVal = data.v[gy][gx]
           const mag = Math.sqrt(uVal * uVal + vVal * vVal) || 0.001
 
-          const px = ((gx + 0.5) / nx) * width
-          const py = height - ((gy + 0.5) / ny) * height
+          const px = (gx / (nx - 1)) * width
+          const py = height - (gy / (ny - 1)) * height
 
-          const dx = (uVal / mag) * Math.min(maxLen, mag * 8)
-          const dy = -(vVal / mag) * Math.min(maxLen, mag * 8)
+          const dx = (uVal / mag) * Math.min(maxLen, mag * 8 * dpr)
+          const dy = -(vVal / mag) * Math.min(maxLen, mag * 8 * dpr)
 
           ctx.beginPath()
           ctx.moveTo(px, py)
@@ -238,412 +279,362 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
           ctx.stroke()
 
           ctx.beginPath()
-          ctx.arc(px + dx, py + dy, 1.8, 0, 2 * Math.PI)
+          ctx.arc(px + dx, py + dy, 2.0 * dpr, 0, 2 * Math.PI)
           ctx.fill()
         }
       }
     }
 
-    // Solid Cylinder Boundary Rendering
-    const xMin = data.x[0][0]
-    const xMax = data.x[0][nx - 1]
-    const yMin = data.y[0][0]
-    const yMax = data.y[ny - 1][0]
+    // Solid Cylinder Obstacle Boundary Overlay (R=0.5 at x=0, y=0)
+    if (data && data.x && data.y && data.x[0] && data.y[0]) {
+      const xMin = data.x[0][0]
+      const xMax = data.x[0][nx - 1]
+      const yMin = data.y[0][0]
+      const yMax = data.y[ny - 1][0]
 
-    const cylX = 0.0
-    const cylY = 0.0
-    const cylR = 0.5
+      const cylX = 0.0
+      const cylY = 0.0
+      const cylR = 0.5
 
-    if (cylX >= xMin - cylR && cylX <= xMax + cylR) {
-      const canvasCylX = ((cylX - xMin) / (xMax - xMin)) * width
-      const canvasCylY = height - ((cylY - yMin) / (yMax - yMin)) * height
-      const canvasCylR = (cylR / (xMax - xMin)) * width
+      if (xMin <= cylX + cylR && xMax >= cylX - cylR && yMin <= cylY + cylR && yMax >= cylY - cylR) {
+        const cylPx = ((cylX - xMin) / (xMax - xMin)) * width
+        const cylPy = height - ((cylY - yMin) / (yMax - yMin)) * height
+        const cylRpx = (cylR / (xMax - xMin)) * width
 
-      ctx.save()
-      ctx.beginPath()
-      ctx.arc(canvasCylX, canvasCylY, canvasCylR, 0, 2 * Math.PI)
-      ctx.fillStyle = '#030712'
-      ctx.shadowColor = '#06b6d4'
-      ctx.shadowBlur = 12
-      ctx.fill()
-      ctx.lineWidth = 3
-      ctx.strokeStyle = '#22d3ee'
-      ctx.stroke()
-
-      // Cylinder cross mark
-      ctx.fillStyle = '#06b6d4'
-      ctx.font = 'bold 10px monospace'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText('R=0.5', canvasCylX, canvasCylY)
-      ctx.restore()
+        ctx.beginPath()
+        ctx.arc(cylPx, cylPy, cylRpx, 0, 2 * Math.PI)
+        ctx.fillStyle = '#020617'
+        ctx.fill()
+        ctx.lineWidth = 2 * dpr
+        ctx.strokeStyle = '#38bdf8'
+        ctx.stroke()
+      }
     }
+  }, [getActiveGrid, colormap, showGridLines, showStreamlines, showVectors, data])
 
-    // Render Pinned Probe Marker if set
-    if (pinnedProbe) {
-      ctx.save()
-      ctx.beginPath()
-      ctx.arc(pinnedProbe.px, pinnedProbe.py, 6, 0, 2 * Math.PI)
-      ctx.fillStyle = 'rgba(6, 182, 212, 0.4)'
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = '#00f2fe'
-      ctx.stroke()
-
-      ctx.beginPath()
-      ctx.arc(pinnedProbe.px, pinnedProbe.py, 2, 0, 2 * Math.PI)
-      ctx.fillStyle = '#ffffff'
-      ctx.fill()
-      ctx.restore()
-    }
-  }, [data, refData, activeVar, visMode, colormap, showVectors, showGridLines, showStreamlines, pinnedProbe])
-
+  // Trigger render on changes or resize
   useEffect(() => {
     renderCanvas()
   }, [renderCanvas])
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!canvasRef.current || !data) return
-    const rect = canvasRef.current.getBoundingClientRect()
-    const clientX = e.clientX - rect.left
-    const clientY = e.clientY - rect.top
+  useEffect(() => {
+    const handleResize = () => {
+      renderCanvas()
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [renderCanvas])
 
-    const width = rect.width
-    const height = rect.height
+  // Coordinate probe on canvas mouse move
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!data || !canvasRef.current) return
+    const rect = canvasRef.current.getBoundingClientRect()
+    const relX = (e.clientX - rect.left) / rect.width
+    const relY = 1.0 - (e.clientY - rect.top) / rect.height
 
     const nx = data.u[0].length
     const ny = data.u.length
 
-    const gx = Math.min(nx - 1, Math.max(0, Math.floor((clientX / width) * nx)))
-    const gy = Math.min(ny - 1, Math.max(0, Math.floor(((height - clientY) / height) * ny)))
+    const gx = Math.min(nx - 1, Math.max(0, Math.floor(relX * nx)))
+    const gy = Math.min(ny - 1, Math.max(0, Math.floor(relY * ny)))
 
-    const xVal = data.x[gy]?.[gx] ?? 0
-    const yVal = data.y[gy]?.[gx] ?? 0
+    const xCoord = data.x[gy]?.[gx] ?? 0
+    const yCoord = data.y[gy]?.[gx] ?? 0
     const uVal = data.u[gy]?.[gx] ?? 0
     const vVal = data.v[gy]?.[gx] ?? 0
     const pVal = data.p[gy]?.[gx] ?? 0
-    const mag = data.velocity_magnitude[gy]?.[gx] ?? Math.sqrt(uVal * uVal + vVal * vVal)
-    const vort = data.vorticity?.[gy]?.[gx]
+    const magVal = data.velocity_magnitude[gy]?.[gx] ?? Math.sqrt(uVal * uVal + vVal * vVal)
+    const vortVal = data.vorticity ? data.vorticity[gy]?.[gx] : undefined
 
     setProbe({
-      x: xVal,
-      y: yVal,
+      x: xCoord,
+      y: yCoord,
       u: uVal,
       v: vVal,
       p: pVal,
-      mag,
-      vorticity: vort,
-      px: clientX,
-      py: clientY
+      mag: magVal,
+      vorticity: vortVal,
+      px: e.clientX - rect.left,
+      py: e.clientY - rect.top
     })
-    setHoverInside(true)
   }
 
-  const handleCanvasClick = () => {
-    if (!probe) return
-    if (pinnedProbe && Math.abs(pinnedProbe.px - probe.px) < 10 && Math.abs(pinnedProbe.py - probe.py) < 10) {
-      setPinnedProbe(null)
-    } else {
-      setPinnedProbe({ ...probe })
-    }
-  }
-
-  const handleMouseLeave = () => {
-    setHoverInside(false)
-    setProbe(null)
-  }
-
-  const handleExportPNG = () => {
+  const handleDownloadSnapshot = () => {
     if (!canvasRef.current) return
     const link = document.createElement('a')
-    link.download = `pinnflow_${activeVar}_${visMode}_t${data?.metrics.time_snapshot.toFixed(1) || '0.0'}.png`
+    link.download = `pinnflow_${activeVar}_t${data?.metrics.time_snapshot ?? 0}.png`
     link.href = canvasRef.current.toDataURL('image/png')
     link.click()
   }
 
-  const variableLabels: Record<FieldVariable, { label: string; symbol: string; unit: string }> = {
-    velocity_magnitude: { label: 'Velocity Magnitude', symbol: '|u|', unit: 'm/s' },
-    u: { label: 'Streamwise Velocity', symbol: 'u', unit: 'm/s' },
-    v: { label: 'Transverse Velocity', symbol: 'v', unit: 'm/s' },
-    p: { label: 'Static Pressure', symbol: 'p', unit: 'Pa' },
-    vorticity: { label: 'Vorticity', symbol: 'ω', unit: '1/s' }
-  }
-
-  const hasValidData = React.useMemo(() => {
-    if (!data || !data.u || !Array.isArray(data.u) || data.u.length === 0 || !data.u[0] || data.u[0].length === 0) {
-      return false
-    }
-    const ny = data.u.length
-    const nx = data.u[0].length
-    let nonZeroFound = false
-    for (let r = 0; r < ny; r++) {
-      for (let c = 0; c < nx; c++) {
-        const val = data.u[r]?.[c]
-        if (val !== undefined && val !== null && !isNaN(val) && Math.abs(val) > 1e-8) {
-          nonZeroFound = true
-          break
-        }
-      }
-      if (nonZeroFound) break
-    }
-    return nonZeroFound
-  }, [data])
+  const activeInfo = getActiveGrid()
+  const isVorticityMissing = activeVar === 'vorticity' && (!data?.vorticity || data.vorticity.length === 0)
+  const isReferenceMissing = (visMode === 'reference' || visMode === 'absolute_error') && !refData
+  const isDegenerateField = activeInfo ? (activeInfo.hasNaN || activeInfo.isUniform) : false
 
   return (
-    <div ref={containerRef} className="flex flex-col space-y-4 rounded-2xl border border-slate-800/80 bg-slate-900/60 p-5 backdrop-blur-2xl shadow-2xl glass-panel relative">
-      {/* Visual Controls Header Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3.5">
-        {/* Mode Selector */}
-        <div className="flex items-center gap-1 bg-slate-950/90 p-1 rounded-xl border border-slate-800 shadow-inner">
-          <button
-            onClick={() => setVisMode('prediction')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              visMode === 'prediction' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-900/40' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Prediction (PINN)
-          </button>
-          <button
-            onClick={() => setVisMode('reference')}
-            disabled={!refData}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              visMode === 'reference' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-900/40' : 'text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed'
-            }`}
-          >
-            Reference DNS
-          </button>
-          <button
-            onClick={() => setVisMode('absolute_error')}
-            disabled={!refData}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              visMode === 'absolute_error' ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-900/40' : 'text-slate-400 hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed'
-            }`}
-          >
-            Absolute Error
-          </button>
-        </div>
-
-        {/* Physical Variable Selector */}
-        <div className="flex items-center gap-1 bg-slate-950/90 p-1 rounded-xl border border-slate-800 font-mono text-xs shadow-inner">
+    <div className="flex flex-col space-y-4 rounded-xl border border-slate-800/90 bg-slate-900/70 p-5 backdrop-blur-xl shadow-2xl glass-panel relative">
+      {/* Top Header: Variable Toggles & Colormap controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs font-bold text-slate-300 font-mono mr-1">Variable:</span>
           {(['velocity_magnitude', 'u', 'v', 'p', 'vorticity'] as FieldVariable[]).map((v) => (
             <button
               key={v}
+              type="button"
               onClick={() => setActiveVar(v)}
-              className={`px-2.5 py-1 rounded-lg transition-all font-medium ${
+              className={`rounded-lg px-2.5 py-1 text-xs font-mono transition ${
                 activeVar === v
-                  ? 'bg-gradient-to-r from-cyan-950 to-blue-950 text-cyan-300 border border-cyan-700/60 shadow-inner font-bold'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/30'
+                  : 'bg-slate-950/80 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-800'
               }`}
-              title={variableLabels[v].label}
             >
-              {variableLabels[v].symbol}
+              {v === 'velocity_magnitude' ? '|u| Magnitude' : v === 'vorticity' ? 'ω Vorticity' : v}
             </button>
           ))}
         </div>
 
-        {/* Colormap & Display Toggles */}
-        <div className="flex items-center space-x-2 font-mono text-xs">
+        <div className="flex items-center space-x-2">
+          {/* Colormap Selector */}
           <select
             value={colormap}
             onChange={(e) => setColormap(e.target.value as ColormapType)}
-            className="rounded-lg border border-slate-700/80 bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 focus:border-cyan-500 focus:outline-none shadow-sm"
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-xs text-slate-300 font-mono focus:border-cyan-500 focus:outline-none"
           >
-            <option value="turbo">Turbo</option>
-            <option value="viridis">Viridis</option>
+            <option value="turbo">Turbo (Scientific)</option>
+            <option value="viridis">Viridis (Perceptual)</option>
             <option value="inferno">Inferno</option>
+            <option value="coolwarm">Coolwarm (Diverging)</option>
             <option value="plasma">Plasma</option>
-            <option value="coolwarm">Coolwarm</option>
           </select>
 
+          {/* Snapshot capture */}
           <button
-            onClick={() => setShowStreamlines(!showStreamlines)}
-            className={`px-2.5 py-1.5 rounded-lg border transition shadow-sm ${
-              showStreamlines
-                ? 'bg-cyan-950 border-cyan-700 text-cyan-300 font-semibold'
-                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Toggle Fluid Streamlines"
-          >
-            Streamlines
-          </button>
-
-          <button
-            onClick={() => setShowVectors(!showVectors)}
-            className={`px-2.5 py-1.5 rounded-lg border transition shadow-sm ${
-              showVectors
-                ? 'bg-cyan-950 border-cyan-700 text-cyan-300 font-semibold'
-                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Toggle Velocity Vector Quiver"
-          >
-            Vectors
-          </button>
-
-          <button
-            onClick={() => setShowGridLines(!showGridLines)}
-            className={`px-2.5 py-1.5 rounded-lg border transition shadow-sm ${
-              showGridLines
-                ? 'bg-cyan-950 border-cyan-700 text-cyan-300 font-semibold'
-                : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Toggle Mesh Grid"
-          >
-            Grid
-          </button>
-
-          <button
-            onClick={handleExportPNG}
-            disabled={!data}
-            className="p-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-cyan-300 hover:border-slate-700 transition disabled:opacity-40"
-            title="Snapshot Canvas as High-Res PNG"
+            type="button"
+            onClick={handleDownloadSnapshot}
+            className="p-1.5 rounded-lg border border-slate-800 bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            title="Download PNG Snapshot"
           >
             <Camera className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      {/* Main Fluid Canvas Viewport */}
-      <div className="relative aspect-[2/1] w-full overflow-hidden rounded-xl border border-slate-800/90 bg-slate-950 flex items-center justify-center shadow-2xl group">
-        {isLoading && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/85 backdrop-blur-md text-cyan-400">
-            <div className="relative flex h-14 w-14 items-center justify-center mb-3">
-              <div className="absolute h-full w-full animate-ping rounded-full bg-cyan-500/20" />
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
-            </div>
-            <span className="text-xs font-mono font-semibold tracking-wider">Computing Autograd Navier-Stokes Mesh...</span>
-            <span className="text-[10px] text-slate-400 mt-1 font-mono">Evaluating pointwise momentum & continuity operators</span>
-          </div>
-        )}
+      {/* Mode Tabs (Prediction, Reference, Absolute Error, PDE Residual) */}
+      <div className="flex items-center justify-between text-xs font-mono">
+        <div className="flex space-x-1.5 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+          <button
+            type="button"
+            onClick={() => setVisMode('prediction')}
+            className={`px-3 py-1 rounded-lg transition ${
+              visMode === 'prediction' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            PINN Prediction
+          </button>
+          <button
+            type="button"
+            onClick={() => setVisMode('reference')}
+            className={`px-3 py-1 rounded-lg transition ${
+              visMode === 'reference' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            DNS Reference
+          </button>
+          <button
+            type="button"
+            onClick={() => setVisMode('absolute_error')}
+            className={`px-3 py-1 rounded-lg transition ${
+              visMode === 'absolute_error' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            |Error| Residual
+          </button>
+          <button
+            type="button"
+            onClick={() => setVisMode('pde_residual')}
+            className={`px-3 py-1 rounded-lg transition ${
+              visMode === 'pde_residual' ? 'bg-cyan-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            PDE Residual
+          </button>
+        </div>
 
-        {!data && !isLoading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-500 space-y-3 text-center px-4 pointer-events-none">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-950/40 border border-cyan-800/60 text-cyan-400">
-              <Compass className="h-6 w-6 animate-pulse" />
-            </div>
-            <div>
-              <p className="text-xs font-mono text-slate-300 font-semibold">Scientific Instrument Ready</p>
-              <p className="text-[11px] text-slate-500 font-mono mt-0.5 max-w-sm">
-                Configure experiment parameters on the left and click &quot;Evaluate Physical Field&quot; to execute real-time autograd inference.
-              </p>
-            </div>
-          </div>
-        )}
+        {/* Display Overlays Toggles */}
+        <div className="flex items-center space-x-3 text-slate-400">
+          <label className="flex items-center space-x-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showStreamlines}
+              onChange={(e) => setShowStreamlines(e.target.checked)}
+              className="rounded border-slate-800 bg-slate-950 text-cyan-500"
+            />
+            <span className="text-[11px]">Streamlines</span>
+          </label>
+          <label className="flex items-center space-x-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showVectors}
+              onChange={(e) => setShowVectors(e.target.checked)}
+              className="rounded border-slate-800 bg-slate-950 text-cyan-500"
+            />
+            <span className="text-[11px]">Vectors</span>
+          </label>
+          <label className="flex items-center space-x-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showGridLines}
+              onChange={(e) => setShowGridLines(e.target.checked)}
+              className="rounded border-slate-800 bg-slate-950 text-cyan-500"
+            />
+            <span className="text-[11px]">Mesh</span>
+          </label>
+        </div>
+      </div>
 
-        {data && !hasValidData && !isLoading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md text-slate-400 space-y-3 text-center px-6 pointer-events-none">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-950/60 border border-amber-800/80 text-amber-400">
-              <Compass className="h-6 w-6" />
-            </div>
-            <div>
-              <p className="text-sm font-mono text-amber-300 font-bold">No Data / Computation Incomplete</p>
-              <p className="text-xs text-slate-400 font-mono mt-1 max-w-md">
-                The physical field returned all zero or uncomputable values. Please check model weights or reduce grid resolution.
-              </p>
-            </div>
-          </div>
-        )}
-
+      {/* Main Canvas Viewport Container */}
+      <div
+        ref={containerRef}
+        className="relative w-full h-[420px] rounded-xl overflow-hidden border border-slate-800/80 bg-slate-950 shadow-inner group flex items-center justify-center"
+        onMouseEnter={() => setHoverInside(true)}
+        onMouseLeave={() => setHoverInside(false)}
+      >
         <canvas
           ref={canvasRef}
-          width={900}
-          height={450}
           onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-          onClick={handleCanvasClick}
-          className="h-full w-full object-contain cursor-crosshair"
+          onClick={() => setPinnedProbe((prev) => (prev ? null : probe))}
+          className="w-full h-full cursor-crosshair block"
         />
 
-        {/* Floating Probe HUD */}
-        {probe && hoverInside && !pinnedProbe && (
-          <div
-            className="pointer-events-none absolute z-20 rounded-xl border border-cyan-500/50 bg-slate-950/95 p-3 text-xs font-mono text-slate-200 shadow-2xl backdrop-blur-xl transition-opacity duration-150"
-            style={{
-              left: `${Math.min(probe.px + 15, (containerRef.current?.clientWidth || 600) - 220)}px`,
-              top: `${Math.min(probe.py + 15, 230)}px`
-            }}
-          >
-            <div className="flex items-center space-x-1.5 border-b border-slate-800 pb-1.5 text-cyan-400 font-bold">
-              <Crosshair className="h-3.5 w-3.5" />
-              <span>Probe (x={probe.x.toFixed(2)}, y={probe.y.toFixed(2)})</span>
+        {/* OVERLAY 1: Loading Scientific Simulation */}
+        {isLoading && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md transition-all space-y-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-950/80 border border-cyan-500 text-cyan-400 shadow-xl">
+              <RefreshCw className="h-7 w-7 animate-spin" />
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-              <div><span className="text-slate-500">|u|:</span> <span className="text-cyan-300 font-bold">{probe.mag.toFixed(3)} m/s</span></div>
-              <div><span className="text-slate-500">p:</span> <span className="text-slate-200">{probe.p.toFixed(3)} Pa</span></div>
-              <div><span className="text-slate-500">u:</span> <span className="text-slate-300">{probe.u.toFixed(3)}</span></div>
-              <div><span className="text-slate-500">v:</span> <span className="text-slate-300">{probe.v.toFixed(3)}</span></div>
-              {probe.vorticity !== undefined && (
-                <div className="col-span-2 pt-0.5 border-t border-slate-800/60"><span className="text-slate-500">Vorticity (ω):</span> <span className="text-purple-300 font-bold">{probe.vorticity.toFixed(3)} 1/s</span></div>
-              )}
+            <div className="text-center space-y-1">
+              <h4 className="text-sm font-bold text-white font-mono">Loading Scientific Simulation...</h4>
+              <p className="text-xs text-slate-400 font-sans">Evaluating Navier-Stokes physical coordinates in 500-point batches</p>
             </div>
           </div>
         )}
 
-        {/* Active Variable & Status Badge */}
-        {data && (
-          <div className="absolute top-3 left-3 pointer-events-none flex items-center space-x-2">
-            <div className="rounded-lg bg-slate-950/90 px-3 py-1 text-[11px] font-mono border border-slate-800 text-slate-300 backdrop-blur-md shadow-md">
-              <span className="text-slate-500">Field:</span> <span className="text-cyan-300 font-bold">{variableLabels[activeVar].label}</span>
+        {/* OVERLAY 2: Awaiting Compute Parameters */}
+        {!data && !isLoading && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md p-6 text-center space-y-3">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 border border-slate-700 text-slate-400">
+              <Cpu className="h-7 w-7 animate-pulse" />
             </div>
-            <div className="rounded-lg bg-slate-950/90 px-2.5 py-1 text-[11px] font-mono border border-slate-800 text-slate-400 backdrop-blur-md">
-              <span>t = {data.metrics.time_snapshot.toFixed(1)}s</span>
+            <div className="space-y-1 max-w-sm">
+              <h4 className="text-sm font-bold text-white font-mono">Awaiting Compute Parameters</h4>
+              <p className="text-xs text-slate-400">
+                Click &quot;Evaluate Physical Field&quot; to begin autograd neural Navier-Stokes flow reconstruction.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* OVERLAY 3: Missing Vorticity */}
+        {data && !isLoading && isVorticityMissing && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/85 backdrop-blur-md p-6 text-center space-y-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-950/80 border border-amber-600 text-amber-400">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <div className="space-y-1 max-w-sm">
+              <h4 className="text-sm font-bold text-white font-mono">Autograd Vorticity Field Not Computed</h4>
+              <p className="text-xs text-slate-400">
+                Vorticity (ω = ∂v/∂x - ∂u/∂y) requires second-order autograd graphs. Check &quot;Compute Exact Autograd Vorticity&quot; and evaluate.
+              </p>
+            </div>
+            {onComputeVorticity && (
+              <button
+                type="button"
+                onClick={onComputeVorticity}
+                className="mt-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 text-xs font-bold text-white shadow-lg hover:from-cyan-500 hover:to-blue-500 font-mono"
+              >
+                ⚡ Compute Vorticity Now
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* OVERLAY 4: Missing Reference DNS Ground Truth */}
+        {data && !isLoading && isReferenceMissing && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/85 backdrop-blur-md p-6 text-center space-y-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-950/80 border border-indigo-600 text-indigo-400">
+              <Layers className="h-6 w-6" />
+            </div>
+            <div className="space-y-1 max-w-sm">
+              <h4 className="text-sm font-bold text-white font-mono">Reference DNS Dataset Unavailable</h4>
+              <p className="text-xs text-slate-400">
+                The authentic Karniadakis cylinder wake DNS dataset (cylinder_nektar_wake.mat) is required for ground-truth comparison.
+                Execute <code className="text-cyan-300 font-mono bg-slate-900 px-1 py-0.5 rounded">python scripts/download_data.py</code> to download authentic data.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* OVERLAY 5: NaN / Uniform Fields Notice */}
+        {data && !isLoading && isDegenerateField && !isVorticityMissing && !isReferenceMissing && (
+          <div className="absolute top-4 right-4 z-20 max-w-xs rounded-xl border border-amber-800/80 bg-amber-950/80 p-3 text-xs text-amber-200 backdrop-blur-md shadow-xl space-y-1">
+            <div className="font-bold flex items-center space-x-1">
+              <AlertCircle className="h-4 w-4 text-amber-400" />
+              <span>Uniform or Degenerate Field Detected</span>
+            </div>
+            <p className="text-[11px] text-amber-300/90 font-mono">
+              The evaluated field has uniform values across the spatial mesh (min ≈ max). Check coordinates and model calibration.
+            </p>
+          </div>
+        )}
+
+        {/* Floating Probe Coordinate HUD */}
+        {(hoverInside || pinnedProbe) && (probe || pinnedProbe) && (
+          <div className="absolute bottom-3 left-3 z-20 rounded-xl border border-slate-700/80 bg-slate-950/90 p-3 font-mono text-[11px] shadow-2xl backdrop-blur-md space-y-1 text-slate-200 pointer-events-none">
+            <div className="flex items-center space-x-1.5 text-cyan-400 font-bold border-b border-slate-800 pb-1">
+              <Crosshair className="h-3 w-3" />
+              <span>Spatial Probe (x, y)</span>
+              {pinnedProbe && <span className="text-[10px] text-amber-400 ml-1">[Pinned]</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+              <div>x: <span className="text-white">{(pinnedProbe || probe)!.x.toFixed(3)}</span></div>
+              <div>y: <span className="text-white">{(pinnedProbe || probe)!.y.toFixed(3)}</span></div>
+              <div>u: <span className="text-cyan-300 font-semibold">{(pinnedProbe || probe)!.u.toFixed(4)}</span></div>
+              <div>v: <span className="text-cyan-300 font-semibold">{(pinnedProbe || probe)!.v.toFixed(4)}</span></div>
+              <div>p: <span className="text-purple-300 font-semibold">{(pinnedProbe || probe)!.p.toFixed(4)}</span></div>
+              <div>|u|: <span className="text-emerald-300 font-semibold">{(pinnedProbe || probe)!.mag.toFixed(4)}</span></div>
+              {(pinnedProbe || probe)!.vorticity !== undefined && (
+                <div className="col-span-2">ω: <span className="text-amber-300 font-semibold">{(pinnedProbe || probe)!.vorticity!.toFixed(4)}</span></div>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Pinned Probe Coordinate Card (if user clicked to pin) */}
-      {pinnedProbe && (
-        <div className="rounded-xl border border-cyan-500/40 bg-slate-950/90 p-3.5 text-xs font-mono shadow-lg flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center space-x-2 text-cyan-300 font-bold">
-            <Crosshair className="h-4 w-4" />
-            <span>Pinned Spatial Probe at ({pinnedProbe.x.toFixed(2)}, {pinnedProbe.y.toFixed(2)})</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-4 text-[11px]">
-            <div><span className="text-slate-500">|u|:</span> <span className="text-cyan-300 font-semibold">{pinnedProbe.mag.toFixed(3)} m/s</span></div>
-            <div><span className="text-slate-500">u:</span> <span className="text-slate-200">{pinnedProbe.u.toFixed(3)}</span></div>
-            <div><span className="text-slate-500">v:</span> <span className="text-slate-200">{pinnedProbe.v.toFixed(3)}</span></div>
-            <div><span className="text-slate-500">p:</span> <span className="text-slate-200">{pinnedProbe.p.toFixed(3)}</span></div>
-            {pinnedProbe.vorticity !== undefined && (
-              <div><span className="text-slate-500">ω:</span> <span className="text-purple-300 font-semibold">{pinnedProbe.vorticity.toFixed(3)}</span></div>
-            )}
-          </div>
-          <button
-            onClick={() => setPinnedProbe(null)}
-            className="text-[10px] px-2 py-1 rounded bg-slate-900 text-slate-400 hover:text-white border border-slate-800"
-          >
-            Clear Pin
-          </button>
-        </div>
-      )}
-
-      {/* Continuous Colorbar & Scale Statistics */}
+      {/* Colormap Legend Bar & Field Extremas */}
       {stats && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs font-mono text-slate-400 px-1 pt-1">
-          {/* Continuous Colorbar Preview */}
-          <div className="flex items-center space-x-2 w-full sm:w-auto">
-            <span className="text-[11px] text-slate-400 font-bold">{stats.min.toFixed(3)}</span>
+        <div className="flex flex-col space-y-1.5 pt-1">
+          <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Min: <strong className="text-slate-200">{stats.min.toFixed(4)}</strong></span>
+            <span>Mean: <strong className="text-cyan-300">{stats.mean.toFixed(4)}</strong></span>
+            <span>Max: <strong className="text-slate-200">{stats.max.toFixed(4)}</strong></span>
+          </div>
+
+          <div className="relative h-2.5 w-full rounded-full overflow-hidden border border-slate-800 p-0.5 bg-slate-950">
             <div
-              className="h-3 w-40 rounded-full border border-slate-700 shadow-inner"
+              className="h-full w-full rounded-full"
               style={{
-                background: colormap === 'turbo'
-                  ? 'linear-gradient(to right, #30123b, #4686fb, #1ae4b6, #a2fc3c, #fbb41a, #e4460a, #7a0403)'
-                  : colormap === 'viridis'
+                background: colormap === 'viridis'
                   ? 'linear-gradient(to right, #440154, #3b528b, #21918c, #5ec962, #fde725)'
                   : colormap === 'inferno'
                   ? 'linear-gradient(to right, #000004, #57106e, #bb3754, #f98e09, #fcffa4)'
+                  : colormap === 'coolwarm'
+                  ? 'linear-gradient(to right, #3b4cc0, #8cb2e9, #ddd, #f49a7b, #b40426)'
                   : colormap === 'plasma'
                   ? 'linear-gradient(to right, #0d0887, #6a00a8, #b12a90, #e16462, #fca636, #f0f921)'
-                  : 'linear-gradient(to right, #0000ff, #ffffff, #ff0000)'
+                  : 'linear-gradient(to right, #30123b, #4682b4, #2cf4a6, #c2e537, #f77a18, #7a0403)'
               }}
             />
-            <span className="text-[11px] text-slate-400 font-bold">{stats.max.toFixed(3)}</span>
-            <span className="text-[10px] text-cyan-400 font-semibold">[{variableLabels[activeVar].unit}]</span>
-          </div>
-
-          <div className="flex items-center space-x-4 text-[11px]">
-            <div><span className="text-slate-500">Min:</span> <span className="text-slate-200">{stats.min.toFixed(4)}</span></div>
-            <div><span className="text-slate-500">Mean:</span> <span className="text-cyan-300 font-bold">{stats.mean.toFixed(4)}</span></div>
-            <div><span className="text-slate-500">Max:</span> <span className="text-slate-200">{stats.max.toFixed(4)}</span></div>
           </div>
         </div>
       )}
