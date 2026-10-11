@@ -2,6 +2,10 @@
 
 <div align="center">
 
+🔴 Live Demo: pinnflow-tahas-projects-28481ad1.vercel.app
+
+<sub>The API runs on a free tier. If it has been idle, the first load can take 30–60 seconds while the backend wakes up.</sub>
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C.svg?logo=pytorch)](https://pytorch.org)
