@@ -2,7 +2,7 @@
 
 <div align="center">
 
-🔴 Live Demo: pinnflow-tahas-projects-28481ad1.vercel.app
+🔴 Live Demo: [pinnflow-tahas-projects-28481ad1.vercel.app](https://pinnflow-git-main-tahas-projects-28481ad1.vercel.app)
 
 <sub>The API runs on a free tier. If it has been idle, the first load can take 30–60 seconds while the backend wakes up.</sub>
 
