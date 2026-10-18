@@ -67,19 +67,24 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({ health, onRefreshHealth, i
             <span className="text-slate-300">{health.git_commit ? health.git_commit.slice(0, 7) : 'head'}</span>
           </div>
 
-          {/* Status Badge */}
-          <div className={`flex items-center space-x-1.5 rounded-lg px-3 py-1.5 border font-semibold shadow-sm transition-colors ${
-            isReady
-              ? 'bg-emerald-950/70 border-emerald-700/80 text-emerald-300'
-              : 'bg-amber-950/70 border-amber-700/80 text-amber-300'
-          }`}>
+          <button
+            type="button"
+            onClick={onRefreshHealth}
+            disabled={isRefreshing}
+            className={`flex items-center space-x-1.5 rounded-lg px-3 py-1.5 border font-semibold shadow-sm transition-colors ${
+              isReady
+                ? 'bg-emerald-950/70 border-emerald-700/80 text-emerald-300 cursor-default'
+                : 'bg-amber-950/70 border-amber-700/80 text-amber-300 hover:bg-amber-900/60 cursor-pointer'
+            }`}
+            title={isReady ? 'Model checkpoint verified' : 'Click to retry connection to inference engine'}
+          >
             {isReady ? (
               <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
             ) : (
               <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
             )}
             <span>{isReady ? 'Checkpoint Verified' : 'Service Not Ready'}</span>
-          </div>
+          </button>
 
           {/* API Docs link */}
           <a

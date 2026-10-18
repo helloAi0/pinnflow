@@ -191,45 +191,36 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Robust Wildcard CORS Middleware
+# Authoritative Wildcard CORS Middleware (Starlette standard)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-@app.middleware("http")
-async def add_cors_and_metadata(request: Request, call_next):
-    # Handle preflight OPTIONS requests directly
-    if request.method == "OPTIONS":
-        res = Response(status_code=200)
-        res.headers["Access-Control-Allow-Origin"] = "*"
-        res.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        res.headers["Access-Control-Allow-Headers"] = "*"
-        return res
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(request.state, "request_id", "system")
+    logger.error(f"Internal unhandled error: {exc}", extra={"request_id": req_id})
+    return Response(
+        content=json.dumps({"detail": f"Internal server error: {str(exc)}"}),
+        status_code=500,
+        media_type="application/json",
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
 
+@app.middleware("http")
+async def add_request_metadata(request: Request, call_next):
     req_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
     request.state.request_id = req_id
     start_time = time.perf_counter()
     
-    try:
-        response = await call_next(request)
-    except Exception as exc:
-        logger.error(f"Internal request error: {exc}", extra={"request_id": req_id})
-        response = Response(
-            content=json.dumps({"status": "error", "detail": f"Internal server error: {str(exc)}"}),
-            status_code=500,
-            media_type="application/json"
-        )
+    response = await call_next(request)
     
     duration = (time.perf_counter() - start_time) * 1000.0
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["X-Request-ID"] = req_id
     response.headers["X-Response-Time-Ms"] = f"{duration:.2f}"
     return response
@@ -240,13 +231,8 @@ async def add_cors_and_metadata(request: Request, call_next):
 @app.api_route("/api/v1/wakeup", methods=["GET", "HEAD"])
 @app.api_route("/wakeup", methods=["GET", "HEAD"])
 def get_wakeup():
-    """Lightweight cold-start ping endpoint to wake up free-tier instances."""
-    return {
-        "status": "awake",
-        "service": "pinnflow",
-        "model_ready": CHECKPOINT_VALID and (MODEL is not None),
-        "timestamp": time.time()
-    }
+    """Lightweight cold-start ping endpoint to wake up free-tier instances without torch operations."""
+    return {"status": "awake"}
 
 @app.get("/api/v1/health", response_model=HealthResponse)
 @app.get("/health", response_model=HealthResponse)
@@ -353,6 +339,13 @@ def predict_field(req: FieldRequest, request: Request):
 
     flat_coords = np.stack([X.flatten(), Y.flatten(), T.flatten()], axis=-1)
     total_points = flat_coords.shape[0]
+    limit = 10000 if req.compute_vorticity else 20000
+    if total_points > limit:
+        vort_str = " with vorticity enabled" if req.compute_vorticity else ""
+        raise HTTPException(
+            status_code=422,
+            detail=f"Requested grid resolution {nx}x{ny} ({total_points} points) exceeds limit of {limit} points{vort_str}."
+        )
 
     BATCH_SIZE = 500
     pde_module = PDELoss(physics_config=PHYSICS_CONFIG)

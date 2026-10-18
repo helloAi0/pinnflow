@@ -1,5 +1,5 @@
 import React from 'react'
-import { Activity, CheckCircle2, Waves, Compass, ShieldAlert } from 'lucide-react'
+import { Activity, CheckCircle2, AlertCircle, Waves, Compass, ShieldAlert } from 'lucide-react'
 import type { FieldResponse } from '../types/api'
 
 interface DiagnosticsTabProps {
@@ -23,6 +23,11 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ data }) => {
   const momXMean = data.metrics.momentum_x_residual_mean
   const momYMean = data.metrics.momentum_y_residual_mean
   const pdeLoss = data.metrics.pde_loss
+
+  const isDivergenceFree = contMean < 0.05
+  const isConvectiveBalanced = momXMean < 0.1
+  const isVortexBalanced = momYMean < 0.1
+  const isSubMilliAccuracy = pdeLoss < 0.005
 
   return (
     <div className="space-y-6">
@@ -53,9 +58,9 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ data }) => {
             </div>
             <div className="text-xl font-bold text-cyan-300 mt-2">{contMean.toExponential(4)}</div>
             <p className="text-[11px] text-slate-500 mt-1">∂u/∂x + ∂v/∂y = 0</p>
-            <div className="mt-3 flex items-center text-[10px] text-emerald-400 font-sans">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              <span>Divergence-Free Flow</span>
+            <div className={`mt-3 flex items-center text-[10px] font-sans ${isDivergenceFree ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isDivergenceFree ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
+              <span>{isDivergenceFree ? 'Divergence-Free Flow' : 'Elevated Divergence'}</span>
             </div>
           </div>
 
@@ -67,9 +72,9 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ data }) => {
             </div>
             <div className="text-xl font-bold text-blue-300 mt-2">{momXMean.toExponential(4)}</div>
             <p className="text-[11px] text-slate-500 mt-1">u_t + (u·∇)u + ∂p/∂x - ν∇²u = 0</p>
-            <div className="mt-3 flex items-center text-[10px] text-emerald-400 font-sans">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              <span>Convective balance preserved</span>
+            <div className={`mt-3 flex items-center text-[10px] font-sans ${isConvectiveBalanced ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isConvectiveBalanced ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
+              <span>{isConvectiveBalanced ? 'Convective balance preserved' : 'Convective residual'}</span>
             </div>
           </div>
 
@@ -81,9 +86,9 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ data }) => {
             </div>
             <div className="text-xl font-bold text-purple-300 mt-2">{momYMean.toExponential(4)}</div>
             <p className="text-[11px] text-slate-500 mt-1">v_t + (u·∇)v + ∂p/∂y - ν∇²v = 0</p>
-            <div className="mt-3 flex items-center text-[10px] text-emerald-400 font-sans">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              <span>Vortex balance satisfied</span>
+            <div className={`mt-3 flex items-center text-[10px] font-sans ${isVortexBalanced ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isVortexBalanced ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
+              <span>{isVortexBalanced ? 'Vortex balance satisfied' : 'Vortex residual'}</span>
             </div>
           </div>
 
@@ -95,9 +100,9 @@ export const DiagnosticsTab: React.FC<DiagnosticsTabProps> = ({ data }) => {
             </div>
             <div className="text-xl font-bold text-emerald-300 mt-2">{pdeLoss.toExponential(4)}</div>
             <p className="text-[11px] text-slate-500 mt-1">mean(Rc² + Ru² + Rv²)</p>
-            <div className="mt-3 flex items-center text-[10px] text-emerald-400 font-sans">
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              <span>Sub-milliresidual accuracy</span>
+            <div className={`mt-3 flex items-center text-[10px] font-sans ${isSubMilliAccuracy ? 'text-emerald-400' : 'text-amber-400'}`}>
+              {isSubMilliAccuracy ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <AlertCircle className="h-3 w-3 mr-1" />}
+              <span>{isSubMilliAccuracy ? 'Sub-milliresidual accuracy' : 'PDE residual elevated'}</span>
             </div>
           </div>
         </div>

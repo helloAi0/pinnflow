@@ -12,7 +12,10 @@ from src.models.factory import create_model
 logger = logging.getLogger("PINNFlowCheckpoint")
 
 def get_git_commit_sha() -> str:
-    """Retrieves the current Git commit SHA if in a git repository."""
+    """Retrieves the current Git commit SHA from environment variables or git repository."""
+    env_sha = os.getenv("RENDER_GIT_COMMIT") or os.getenv("GIT_COMMIT") or os.getenv("VERCEL_GIT_COMMIT_SHA")
+    if env_sha and env_sha.strip():
+        return env_sha.strip()
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
         return sha.decode("ascii").strip()

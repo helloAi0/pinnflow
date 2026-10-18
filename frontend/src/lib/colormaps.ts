@@ -1,85 +1,121 @@
 export type ColormapType = 'turbo' | 'viridis' | 'inferno' | 'coolwarm' | 'plasma'
 
-// Helper to generate 256 RGB points for standard scientific palettes
-function generateTurboLUT(): number[][] {
-  const lut: number[][] = []
-  for (let i = 0; i < 256; i++) {
-    const x = i / 255
-    const r = Math.floor(255 * Math.max(0, Math.min(1, 0.1357 + x * (4.5155 + x * (-8.5638 + x * 4.9086)))))
-    const g = Math.floor(255 * Math.max(0, Math.min(1, 0.0914 + x * (2.1942 + x * (4.8429 + x * (-14.185 + x * 7.645))))))
-    const b = Math.floor(255 * Math.max(0, Math.min(1, 0.1067 + x * (12.573 + x * (-86.801 + x * (268.86 + x * (-338.63 + x * 153.28)))))))
-    lut.push([r, g, b])
-  }
-  return lut
+export type RGB = [number, number, number]
+export type ColorStop = [number, RGB]
+
+export const COLORMAP_STOPS: Record<ColormapType, ColorStop[]> = {
+  turbo: [
+    [0.0, [48, 18, 59]],
+    [0.1, [65, 69, 171]],
+    [0.2, [70, 123, 244]],
+    [0.3, [56, 185, 250]],
+    [0.4, [44, 244, 166]],
+    [0.5, [114, 254, 94]],
+    [0.65, [194, 229, 55]],
+    [0.8, [246, 165, 36]],
+    [0.88, [247, 122, 24]],
+    [0.95, [198, 46, 8]],
+    [1.0, [122, 4, 3]]
+  ],
+  viridis: [
+    [0.0, [68, 1, 84]],
+    [0.15, [72, 40, 120]],
+    [0.3, [62, 73, 137]],
+    [0.45, [49, 104, 142]],
+    [0.6, [38, 130, 142]],
+    [0.75, [31, 158, 137]],
+    [0.85, [53, 183, 121]],
+    [0.93, [110, 206, 88]],
+    [1.0, [253, 231, 37]]
+  ],
+  inferno: [
+    [0.0, [0, 0, 4]],
+    [0.15, [27, 12, 65]],
+    [0.3, [74, 12, 107]],
+    [0.45, [120, 28, 109]],
+    [0.6, [165, 44, 96]],
+    [0.72, [207, 68, 70]],
+    [0.82, [237, 105, 37]],
+    [0.9, [251, 155, 6]],
+    [0.96, [247, 209, 60]],
+    [1.0, [252, 255, 164]]
+  ],
+  coolwarm: [
+    [0.0, [59, 76, 192]],
+    [0.2, [103, 136, 238]],
+    [0.35, [155, 196, 245]],
+    [0.45, [201, 215, 240]],
+    [0.5, [221, 221, 221]],
+    [0.55, [237, 209, 194]],
+    [0.65, [247, 168, 137]],
+    [0.8, [226, 105, 82]],
+    [1.0, [180, 4, 38]]
+  ],
+  plasma: [
+    [0.0, [13, 8, 135]],
+    [0.18, [70, 3, 159]],
+    [0.32, [114, 1, 168]],
+    [0.45, [156, 23, 158]],
+    [0.58, [189, 55, 134]],
+    [0.7, [216, 87, 107]],
+    [0.8, [237, 121, 83]],
+    [0.9, [251, 159, 58]],
+    [0.96, [253, 202, 38]],
+    [1.0, [240, 249, 33]]
+  ]
 }
 
-function generateViridisLUT(): number[][] {
-  const lut: number[][] = []
+function buildLUTFromStops(stops: ColorStop[]): RGB[] {
+  const lut: RGB[] = []
   for (let i = 0; i < 256; i++) {
-    const x = i / 255
-    const r = Math.floor(255 * Math.max(0, Math.min(1, 0.267 + x * (0.005 + x * (0.329 + x * (1.17 - x * 0.77))))))
-    const g = Math.floor(255 * Math.max(0, Math.min(1, 0.004 + x * (1.405 - x * (0.835 + x * (0.505 - x * 0.9))))))
-    const b = Math.floor(255 * Math.max(0, Math.min(1, 0.329 + x * (1.107 - x * (2.813 + x * (2.45 - x * 0.73))))))
-    lut.push([r, g, b])
-  }
-  return lut
-}
+    const t = i / 255.0
+    let s0 = stops[0]
+    let s1 = stops[stops.length - 1]
 
-function generateInfernoLUT(): number[][] {
-  const lut: number[][] = []
-  for (let i = 0; i < 256; i++) {
-    const x = i / 255
-    const r = Math.floor(255 * Math.max(0, Math.min(1, Math.pow(x, 0.7))))
-    const g = Math.floor(255 * Math.max(0, Math.min(1, Math.pow(x, 1.8) * 0.9)))
-    const b = Math.floor(255 * Math.max(0, Math.min(1, Math.sin(x * Math.PI) * 0.5 + 0.15 * (1 - x))))
-    lut.push([r, g, b])
-  }
-  return lut
-}
-
-function generateCoolwarmLUT(): number[][] {
-  const lut: number[][] = []
-  for (let i = 0; i < 256; i++) {
-    const x = i / 255
-    let r = 0, g = 0, b = 0
-    if (x < 0.5) {
-      const t = x * 2
-      r = Math.floor(59 + t * (220 - 59))
-      g = Math.floor(76 + t * (220 - 76))
-      b = Math.floor(192 + t * (220 - 192))
-    } else {
-      const t = (x - 0.5) * 2
-      r = Math.floor(220 + t * (180 - 220))
-      g = Math.floor(220 + t * (4 - 220))
-      b = Math.floor(220 + t * (39 - 220))
+    for (let j = 0; j < stops.length - 1; j++) {
+      if (t >= stops[j][0] && t <= stops[j + 1][0]) {
+        s0 = stops[j]
+        s1 = stops[j + 1]
+        break
+      }
     }
-    lut.push([Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))])
+
+    const span = s1[0] - s0[0]
+    const frac = span > 0 ? (t - s0[0]) / span : 0
+    const r = Math.round(s0[1][0] + frac * (s1[1][0] - s0[1][0]))
+    const g = Math.round(s0[1][1] + frac * (s1[1][1] - s0[1][1]))
+    const b = Math.round(s0[1][2] + frac * (s1[1][2] - s0[1][2]))
+
+    lut.push([
+      Math.max(0, Math.min(255, r)),
+      Math.max(0, Math.min(255, g)),
+      Math.max(0, Math.min(255, b))
+    ])
   }
   return lut
 }
 
-function generatePlasmaLUT(): number[][] {
-  const lut: number[][] = []
-  for (let i = 0; i < 256; i++) {
-    const x = i / 255
-    const r = Math.floor(255 * Math.max(0, Math.min(1, 0.058 + x * (2.55 - x * (1.92 - x * 0.32)))))
-    const g = Math.floor(255 * Math.max(0, Math.min(1, 0.015 + x * (0.28 + x * (2.28 - x * 1.57)))))
-    const b = Math.floor(255 * Math.max(0, Math.min(1, 0.53 + x * (0.88 - x * (3.14 - x * 1.73)))))
-    lut.push([r, g, b])
-  }
-  return lut
-}
-
-export const COLORMAP_LUTS: Record<ColormapType, number[][]> = {
-  turbo: generateTurboLUT(),
-  viridis: generateViridisLUT(),
-  inferno: generateInfernoLUT(),
-  coolwarm: generateCoolwarmLUT(),
-  plasma: generatePlasmaLUT()
+export const COLORMAP_LUTS: Record<ColormapType, RGB[]> = {
+  turbo: buildLUTFromStops(COLORMAP_STOPS.turbo),
+  viridis: buildLUTFromStops(COLORMAP_STOPS.viridis),
+  inferno: buildLUTFromStops(COLORMAP_STOPS.inferno),
+  coolwarm: buildLUTFromStops(COLORMAP_STOPS.coolwarm),
+  plasma: buildLUTFromStops(COLORMAP_STOPS.plasma)
 }
 
 /**
- * Samples RGB color from a 256-entry precomputed lookup table.
+ * Returns a CSS linear-gradient string matching the exact stops of the 256-entry LUT.
+ */
+export function getColorbarGradient(palette: ColormapType): string {
+  const stops = COLORMAP_STOPS[palette] || COLORMAP_STOPS.turbo
+  const colorList = stops
+    .map(([pos, [r, g, b]]) => `rgb(${r}, ${g}, ${b}) ${(pos * 100).toFixed(1)}%`)
+    .join(', ')
+  return `linear-gradient(to right, ${colorList})`
+}
+
+/**
+ * Samples RGB color from the 256-entry precomputed lookup table.
  */
 export function sampleColormapLUT(
   val: number,
@@ -88,7 +124,7 @@ export function sampleColormapLUT(
   palette: ColormapType = 'turbo'
 ): [number, number, number] {
   if (isNaN(val) || !isFinite(val) || isNaN(min) || isNaN(max)) {
-    return [15, 23, 42] // Slate dark background
+    return [15, 23, 42] // Slate dark background for invalid numbers
   }
 
   const range = max - min
@@ -96,6 +132,5 @@ export function sampleColormapLUT(
   const idx = Math.min(255, Math.max(0, Math.round(norm * 255)))
 
   const lut = COLORMAP_LUTS[palette] || COLORMAP_LUTS.turbo
-  const color = lut[idx]
-  return [color[0], color[1], color[2]]
+  return lut[idx]
 }

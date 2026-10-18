@@ -34,7 +34,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
 
-  // Scientific experiment parameters
+  // Scientific experiment parameters (default compute_vorticity=false per reliability spec)
   const [params, setParams] = useState<FieldRequest>({
     x_min: 1.0,
     x_max: 8.0,
@@ -43,7 +43,7 @@ export function App() {
     t: 10.0,
     nx: 100,
     ny: 50,
-    compute_vorticity: true,
+    compute_vorticity: false,
   })
 
   const [fieldData, setFieldData] = useState<FieldResponse | null>(null)
@@ -70,6 +70,30 @@ export function App() {
       setIsRefreshingHealth(false)
     }
   }, [])
+
+  // Retry routine for waking backend when offline
+  const handleRetryConnection = useCallback(async () => {
+    setBackendState('waking')
+    setColdStartProgress(10)
+    const wokeUp = await wakeBackend((prog) => {
+      setColdStartProgress(prog)
+    })
+    if (wokeUp) {
+      setColdStartProgress(100)
+      setBackendState('ready')
+      refreshHealthStatus()
+    } else {
+      setBackendState('offline')
+      refreshHealthStatus()
+    }
+  }, [refreshHealthStatus])
+
+  // Stop animation immediately when leaving the Field tab
+  useEffect(() => {
+    if (activeTab !== 'field' && isPlaying) {
+      setIsPlaying(false)
+    }
+  }, [activeTab, isPlaying])
 
   // Startup Routine to wake up cold backend containers up to ~100s
   useEffect(() => {
@@ -134,6 +158,7 @@ export function App() {
     const controller = new AbortController()
     abortControllerRef.current = controller
 
+    const debounceMs = isPlaying ? 50 : 400
     const timer = setTimeout(async () => {
       setIsLoading(true)
       setError(null)
@@ -182,12 +207,27 @@ export function App() {
           setIsLoading(false)
         }
       }
-    }, isPlaying ? 250 : 400)
+    }, debounceMs)
 
     return () => {
       clearTimeout(timer)
     }
   }, [params, compareMode, backendState, isPlaying, health.reference_dataset_available])
+
+  // Animation frame progression: advances t ONLY AFTER the previous frame finished loading
+  useEffect(() => {
+    if (!isPlaying || activeTab !== 'field' || isLoading || backendState !== 'ready') return
+
+    const frameTimer = setTimeout(() => {
+      setParams((prev) => {
+        let nextT = Math.round((prev.t + 0.2) * 10) / 10
+        if (nextT > 19.9) nextT = 0.0
+        return { ...prev, t: nextT }
+      })
+    }, 120)
+
+    return () => clearTimeout(frameTimer)
+  }, [isPlaying, activeTab, isLoading, backendState])
 
   const handleManualEvaluate = useCallback((overrideParams?: FieldRequest) => {
     if (overrideParams) {
@@ -257,7 +297,7 @@ export function App() {
 
             <div className="space-y-2">
               <h3 className="text-lg font-extrabold text-white font-mono tracking-tight">
-                Waking up scientific inference engine (cold start takes ~30-50s)...
+                Waking inference engine (cold start 30-60s)
               </h3>
               <p className="text-xs text-slate-400 font-sans leading-relaxed">
                 Render free-tier instances sleep when idle. Initializing PyTorch models and warming up autograd evaluation pipeline...
@@ -293,8 +333,8 @@ export function App() {
 
       <HeaderBar
         health={health}
-        onRefreshHealth={refreshHealthStatus}
-        isRefreshing={isRefreshingHealth}
+        onRefreshHealth={backendState === 'offline' ? handleRetryConnection : refreshHealthStatus}
+        isRefreshing={isRefreshingHealth || backendState === 'waking'}
       />
 
       {/* Backend Status Advisory Banner (if backend is booting or offline) */}
@@ -303,12 +343,12 @@ export function App() {
           <div className="flex items-center space-x-2">
             <AlertTriangle className="h-4 w-4 text-amber-400" />
             <span>
-              <strong>Connecting to Backend:</strong> Free-tier cloud instances (e.g. Render) may take 30-50s to wake up on cold boot.
+              <strong>Connecting to Backend:</strong> Free-tier cloud instances (e.g. Render) may take 30-60s to wake up on cold boot.
             </span>
           </div>
           <button
             type="button"
-            onClick={refreshHealthStatus}
+            onClick={handleRetryConnection}
             className="underline hover:text-white font-mono text-[11px]"
           >
             Retry Connection

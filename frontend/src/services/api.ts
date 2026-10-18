@@ -19,8 +19,6 @@ export const getApiUrl = (): string => {
   return 'http://localhost:8000'
 }
 
-const API_URL = getApiUrl()
-
 /**
  * Format FastAPI 422 validation detail arrays or generic errors into human-readable text.
  */
@@ -39,9 +37,13 @@ export async function formatResponseError(res: Response, defaultMsg = 'Request f
         // FastAPI 422 validation errors array
         return data.detail
           .map((item: { loc?: (string | number)[]; msg?: string }) => {
+            let msg = item.msg || 'Invalid input'
+            if (msg.startsWith('Value error, ')) {
+              msg = msg.slice('Value error, '.length)
+            }
             const field = item.loc ? item.loc.filter((part) => part !== 'body').join('.') : ''
             const prefix = field ? `${field}: ` : ''
-            return `${prefix}${item.msg || 'Invalid input'}`
+            return `${prefix}${msg}`
           })
           .join('; ')
       } else if (typeof data.detail === 'string') {
@@ -58,6 +60,7 @@ export async function formatResponseError(res: Response, defaultMsg = 'Request f
 /**
  * Robust fetch wrapper with exponential backoff on network errors, 502, 503, 504,
  * timeout management, and full AbortSignal pass-through support.
+ * Never retries 4xx client errors (especially 422).
  */
 export async function fetchWithRetry(
   url: string,
@@ -93,7 +96,7 @@ export async function fetchWithRetry(
         options.signal.removeEventListener('abort', onCallerAbort)
       }
 
-      // 4xx errors (except 408 / 429) should NOT be retried
+      // 4xx errors should NEVER be retried (client errors, 422 validation, etc.)
       if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 408)) {
         return res
       }
@@ -139,22 +142,26 @@ export async function fetchWithRetry(
 export const fetchWithTimeoutAndRetry = fetchWithRetry
 
 /**
- * Polls GET /api/v1/wakeup up to ~100s until instance responds.
+ * Polls GET /api/v1/wakeup every 2s for up to ~100s until instance responds.
  */
 export async function wakeBackend(
   onProgress?: (progress: number) => void,
-  maxAttempts = 50,
+  totalTimeoutMs = 100000,
   intervalMs = 2000
 ): Promise<boolean> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const progress = Math.min(98, Math.round((attempt / maxAttempts) * 100))
+  const startTime = Date.now()
+  const apiUrl = getApiUrl()
+
+  while (Date.now() - startTime < totalTimeoutMs) {
+    const elapsed = Date.now() - startTime
+    const progress = Math.min(98, Math.max(5, Math.round((elapsed / totalTimeoutMs) * 100)))
     if (onProgress) onProgress(progress)
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/wakeup`, {
+      const res = await fetch(`${apiUrl}/api/v1/wakeup`, {
         method: 'GET',
         credentials: 'omit',
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(12000)
       })
       if (res.ok) {
         if (onProgress) onProgress(100)
@@ -164,9 +171,7 @@ export async function wakeBackend(
       // Continue polling until deadline
     }
 
-    if (attempt < maxAttempts) {
-      await new Promise((r) => setTimeout(r, intervalMs))
-    }
+    await new Promise((r) => setTimeout(r, intervalMs))
   }
 
   return false
@@ -177,7 +182,8 @@ export async function wakeBackend(
  */
 export async function pingWakeup(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_URL}/api/v1/wakeup`, {
+    const apiUrl = getApiUrl()
+    const res = await fetch(`${apiUrl}/api/v1/wakeup`, {
       method: 'GET',
       credentials: 'omit',
       signal: AbortSignal.timeout(4000)
@@ -192,9 +198,10 @@ export async function pingWakeup(): Promise<boolean> {
  * Health check with exponential backoff.
  */
 export async function checkHealth(maxRetries = 2, initialDelayMs = 1500): Promise<HealthResponse> {
+  const apiUrl = getApiUrl()
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const res = await fetchWithRetry(`${API_URL}/api/v1/health`, { method: 'GET' }, 0, 15000)
+      const res = await fetchWithRetry(`${apiUrl}/api/v1/health`, { method: 'GET' }, 0, 15000)
       if (res.ok) {
         return await res.json()
       }
@@ -222,7 +229,8 @@ export async function checkHealth(maxRetries = 2, initialDelayMs = 1500): Promis
 
 export async function fetchMetadata(): Promise<MetadataResponse | null> {
   try {
-    const res = await fetchWithRetry(`${API_URL}/api/v1/metadata`, { method: 'GET' }, 1, 15000)
+    const apiUrl = getApiUrl()
+    const res = await fetchWithRetry(`${apiUrl}/api/v1/metadata`, { method: 'GET' }, 1, 15000)
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -235,8 +243,9 @@ export async function fetchFieldPrediction(
   signal?: AbortSignal
 ): Promise<{ data: FieldResponse; latencyMs: number }> {
   const start = performance.now()
+  const apiUrl = getApiUrl()
   const res = await fetchWithRetry(
-    `${API_URL}/api/v1/predict/field`,
+    `${apiUrl}/api/v1/predict/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -261,8 +270,9 @@ export async function fetchReferenceField(
   payload: FieldRequest,
   signal?: AbortSignal
 ): Promise<FieldResponse> {
+  const apiUrl = getApiUrl()
   const res = await fetchWithRetry(
-    `${API_URL}/api/v1/reference/field`,
+    `${apiUrl}/api/v1/reference/field`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -285,8 +295,9 @@ export async function fetchPointPrediction(
   payload: PointRequest,
   signal?: AbortSignal
 ): Promise<PointResponse> {
+  const apiUrl = getApiUrl()
   const res = await fetchWithRetry(
-    `${API_URL}/api/v1/predict/point`,
+    `${apiUrl}/api/v1/predict/point`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

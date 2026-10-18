@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Play, Pause, Sliders, RefreshCw, Download, Sparkles, FastForward, Rewind, Server } from 'lucide-react'
 import type { FieldRequest, HealthResponse } from '../types/api'
 
@@ -32,48 +32,45 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
   setIsPlaying
 }) => {
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1)
-  const animIntervalRef = useRef<number | null>(null)
+  const [localNx, setLocalNx] = useState<string>(String(params.nx))
+  const [localNy, setLocalNy] = useState<string>(String(params.ny))
 
-  // Temporal animation playback loop: advances t across frames
   useEffect(() => {
-    if (isPlaying) {
-      animIntervalRef.current = window.setInterval(() => {
-        setParams((prev) => {
-          let nextT = Math.round((prev.t + 0.2 * playbackSpeed) * 10) / 10
-          if (nextT > 19.9) nextT = 0.0
-          return { ...prev, t: nextT }
-        })
-      }, 350)
-    } else if (animIntervalRef.current) {
-      clearInterval(animIntervalRef.current)
-      animIntervalRef.current = null
-    }
+    setLocalNx(String(params.nx))
+  }, [params.nx])
 
-    return () => {
-      if (animIntervalRef.current) {
-        clearInterval(animIntervalRef.current)
-      }
+  useEffect(() => {
+    setLocalNy(String(params.ny))
+  }, [params.ny])
+
+  const commitNx = () => {
+    const val = parseInt(localNx, 10)
+    const clamped = isNaN(val) ? 100 : Math.max(10, Math.min(200, val))
+    setLocalNx(String(clamped))
+    if (clamped !== params.nx) {
+      setParams((prev) => ({ ...prev, nx: clamped }))
     }
-  }, [isPlaying, playbackSpeed, setParams])
+  }
+
+  const commitNy = () => {
+    const val = parseInt(localNy, 10)
+    const clamped = isNaN(val) ? 50 : Math.max(10, Math.min(200, val))
+    setLocalNy(String(clamped))
+    if (clamped !== params.ny) {
+      setParams((prev) => ({ ...prev, ny: clamped }))
+    }
+  }
 
   const applyPreset = (presetType: 'vortex' | 'inflow' | 'farwake' | 'highres') => {
     if (presetType === 'vortex') {
-      const p: FieldRequest = { ...params, t: 10.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
-      setParams(p)
-      onEvaluate(p)
+      setParams((prev) => ({ ...prev, t: 10.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
     } else if (presetType === 'inflow') {
-      const p: FieldRequest = { ...params, t: 2.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
-      setParams(p)
-      onEvaluate(p)
+      setParams((prev) => ({ ...prev, t: 2.0, nx: 100, ny: 50, x_min: 1.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
     } else if (presetType === 'farwake') {
-      const p: FieldRequest = { ...params, t: 16.0, nx: 100, ny: 50, x_min: 2.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }
-      setParams(p)
-      onEvaluate(p)
+      setParams((prev) => ({ ...prev, t: 16.0, nx: 100, ny: 50, x_min: 2.0, x_max: 8.0, y_min: -2.0, y_max: 2.0 }))
     } else if (presetType === 'highres') {
       // 140x70 = 9,800 points (within 10,000 point cap with vorticity)
-      const p: FieldRequest = { ...params, nx: 140, ny: 70 }
-      setParams(p)
-      onEvaluate(p)
+      setParams((prev) => ({ ...prev, nx: 140, ny: 70 }))
     }
   }
 
@@ -276,8 +273,15 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
               type="number"
               min="10"
               max="200"
-              value={params.nx}
-              onChange={(e) => setParams((prev) => ({ ...prev, nx: parseInt(e.target.value) || 100 }))}
+              value={localNx}
+              onChange={(e) => setLocalNx(e.target.value)}
+              onBlur={commitNx}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  commitNx()
+                  e.currentTarget.blur()
+                }
+              }}
               className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
             />
           </div>
@@ -287,8 +291,15 @@ export const QueryControls: React.FC<QueryControlsProps> = ({
               type="number"
               min="10"
               max="200"
-              value={params.ny}
-              onChange={(e) => setParams((prev) => ({ ...prev, ny: parseInt(e.target.value) || 50 }))}
+              value={localNy}
+              onChange={(e) => setLocalNy(e.target.value)}
+              onBlur={commitNy}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  commitNy()
+                  e.currentTarget.blur()
+                }
+              }}
               className="w-full rounded-lg border border-slate-700/80 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 font-mono"
             />
           </div>

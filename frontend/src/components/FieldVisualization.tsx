@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { Crosshair, Camera, AlertCircle, RefreshCw, Cpu, Layers } from 'lucide-react'
 import type { FieldResponse, FieldVariable, VisualizationMode } from '../types/api'
-import { ColormapType, sampleColormapLUT } from '../lib/colormaps'
+import { ColormapType, sampleColormapLUT, getColorbarGradient } from '../lib/colormaps'
 
 interface FieldVisualizationProps {
   data: FieldResponse | null
@@ -135,27 +135,50 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
     const width = canvas.width
     const height = canvas.height
 
-    // Compute min / max / mean
-    let min = Infinity
-    let max = -Infinity
+    // Compute min / max / mean with 1-99 percentile clipping for vorticity and absolute error
+    const validVals: number[] = []
     let sum = 0
-    let count = 0
+    let absMin = Infinity
+    let absMax = -Infinity
+
     for (let r = 0; r < ny; r++) {
       for (let c = 0; c < nx; c++) {
         const v = grid[r][c]
         if (!isNaN(v) && isFinite(v)) {
-          if (v < min) min = v
-          if (v > max) max = v
+          validVals.push(v)
           sum += v
-          count++
+          if (v < absMin) absMin = v
+          if (v > absMax) absMax = v
+        }
+      }
+    }
+
+    let min = isFinite(absMin) ? absMin : 0
+    let max = isFinite(absMax) ? absMax : 1
+    const count = validVals.length
+    const mean = count > 0 ? sum / count : 0
+
+    // Percentile 1-99 range clipping to prevent outliers from washing out dynamic range
+    if (count > 0 && (activeVar === 'vorticity' || visMode === 'absolute_error')) {
+      validVals.sort((a, b) => a - b)
+      const p1 = validVals[Math.floor(count * 0.01)]
+      const p99 = validVals[Math.min(count - 1, Math.floor(count * 0.99))]
+      if (p99 > p1) {
+        if (activeVar === 'vorticity') {
+          const maxAbs = Math.max(Math.abs(p1), Math.abs(p99))
+          min = -maxAbs
+          max = maxAbs
+        } else {
+          min = p1
+          max = p99
         }
       }
     }
 
     setStats({
-      min: isFinite(min) ? min : 0,
-      max: isFinite(max) ? max : 1,
-      mean: count > 0 ? sum / count : 0
+      min,
+      max,
+      mean
     })
 
     const imgData = ctx.createImageData(width, height)
@@ -217,37 +240,81 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
       }
     }
 
-    // Optional Streamlines Overlay
-    if (showStreamlines && data) {
+    // Optional Streamlines Overlay: Physical units numerical integration
+    if (showStreamlines && data && data.x && data.y && data.u && data.v && data.x[0] && data.y[0]) {
       ctx.lineWidth = 1.3 * dpr
       const numLines = 14
-      for (let i = 0; i < numLines; i++) {
-        let curY = ((i + 0.5) / numLines) * (ny - 1)
-        let curX = 0
-        ctx.beginPath()
-        ctx.strokeStyle = `rgba(255, 255, 255, ${0.15 + (i % 3) * 0.06})`
+      const xMin = data.x[0][0]
+      const xMax = data.x[0][nx - 1]
+      const yMin = data.y[0][0]
+      const yMax = data.y[ny - 1][0]
+      const spanX = xMax - xMin || 1.0
+      const spanY = yMax - yMin || 1.0
 
-        const startPx = (curX / (nx - 1)) * width
-        const startPy = height - (curY / (ny - 1)) * height
+      for (let i = 0; i < numLines; i++) {
+        let curPhysX = xMin + 0.02 * spanX
+        let curPhysY = yMin + ((i + 0.5) / numLines) * spanY
+
+        ctx.beginPath()
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.22 + (i % 3) * 0.07})`
+
+        const startPx = ((curPhysX - xMin) / spanX) * width
+        const startPy = height - ((curPhysY - yMin) / spanY) * height
         ctx.moveTo(startPx, startPy)
 
-        for (let step = 0; step < 80; step++) {
-          const gx = Math.min(nx - 1, Math.max(0, Math.floor(curX)))
-          const gy = Math.min(ny - 1, Math.max(0, Math.floor(curY)))
+        const dt = 0.05 * (spanX / nx)
+        let isValidStream = true
 
-          const uVal = data.u[gy]?.[gx] ?? 1.0
-          const vVal = data.v[gy]?.[gx] ?? 0.0
+        for (let step = 0; step < 90; step++) {
+          const gxNorm = ((curPhysX - xMin) / spanX) * (nx - 1)
+          const gyNorm = ((curPhysY - yMin) / spanY) * (ny - 1)
 
-          curX += uVal * 1.5
-          curY += vVal * 1.5
+          if (gxNorm < 0 || gxNorm >= nx - 1 || gyNorm < 0 || gyNorm >= ny - 1) break
 
-          if (curX >= nx - 1 || curY < 0 || curY >= ny - 1) break
+          const gx0 = Math.floor(gxNorm)
+          const gx1 = Math.min(gx0 + 1, nx - 1)
+          const fx = gxNorm - gx0
 
-          const px = (curX / (nx - 1)) * width
-          const py = height - (curY / (ny - 1)) * height
+          const gy0 = Math.floor(gyNorm)
+          const gy1 = Math.min(gy0 + 1, ny - 1)
+          const fy = gyNorm - gy0
+
+          const u00 = data.u[gy0]?.[gx0]
+          const u10 = data.u[gy0]?.[gx1]
+          const u01 = data.u[gy1]?.[gx0]
+          const u11 = data.u[gy1]?.[gx1]
+
+          const v00 = data.v[gy0]?.[gx0]
+          const v10 = data.v[gy0]?.[gx1]
+          const v01 = data.v[gy1]?.[gx0]
+          const v11 = data.v[gy1]?.[gx1]
+
+          if (
+            u00 === undefined || u10 === undefined || u01 === undefined || u11 === undefined ||
+            v00 === undefined || v10 === undefined || v01 === undefined || v11 === undefined ||
+            isNaN(u00) || isNaN(u10) || isNaN(u01) || isNaN(u11) ||
+            isNaN(v00) || isNaN(v10) || isNaN(v01) || isNaN(v11) ||
+            !isFinite(u00) || !isFinite(u10) || !isFinite(u01) || !isFinite(u11) ||
+            !isFinite(v00) || !isFinite(v10) || !isFinite(v01) || !isFinite(v11)
+          ) {
+            isValidStream = false
+            break
+          }
+
+          const uVal = (1 - fx) * (1 - fy) * u00 + fx * (1 - fy) * u10 + (1 - fx) * fy * u01 + fx * fy * u11
+          const vVal = (1 - fx) * (1 - fy) * v00 + fx * (1 - fy) * v10 + (1 - fx) * fy * v01 + fx * fy * v11
+
+          curPhysX += uVal * dt
+          curPhysY += vVal * dt
+
+          const px = ((curPhysX - xMin) / spanX) * width
+          const py = height - ((curPhysY - yMin) / spanY) * height
           ctx.lineTo(px, py)
         }
-        ctx.stroke()
+
+        if (isValidStream) {
+          ctx.stroke()
+        }
       }
     }
 
@@ -310,7 +377,7 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
         ctx.stroke()
       }
     }
-  }, [getActiveGrid, colormap, showGridLines, showStreamlines, showVectors, data])
+  }, [getActiveGrid, colormap, showGridLines, showStreamlines, showVectors, data, activeVar, visMode])
 
   // Trigger render on changes or resize
   useEffect(() => {
@@ -507,8 +574,8 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
           className="w-full h-full cursor-crosshair block"
         />
 
-        {/* OVERLAY 1: Loading Scientific Simulation */}
-        {isLoading && (
+        {/* OVERLAY 1: Loading Scientific Simulation (Only when no prior data exists) */}
+        {!data && isLoading && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md transition-all space-y-3">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-950/80 border border-cyan-500 text-cyan-400 shadow-xl">
               <RefreshCw className="h-7 w-7 animate-spin" />
@@ -517,6 +584,14 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
               <h4 className="text-sm font-bold text-white font-mono">Loading Scientific Simulation...</h4>
               <p className="text-xs text-slate-400 font-sans">Evaluating Navier-Stokes physical coordinates in 500-point batches</p>
             </div>
+          </div>
+        )}
+
+        {/* Frame compute indicator (Keeps canvas visible without flickering) */}
+        {data && isLoading && (
+          <div className="absolute top-3 left-3 z-30 flex items-center space-x-2 bg-slate-950/85 border border-cyan-500/60 rounded-lg px-2.5 py-1 text-[11px] font-mono text-cyan-300 backdrop-blur-md shadow-lg pointer-events-none">
+            <RefreshCw className="h-3 w-3 animate-spin text-cyan-400" />
+            <span>Computing frame...</span>
           </div>
         )}
 
@@ -624,15 +699,7 @@ export const FieldVisualization: React.FC<FieldVisualizationProps> = ({
             <div
               className="h-full w-full rounded-full"
               style={{
-                background: colormap === 'viridis'
-                  ? 'linear-gradient(to right, #440154, #3b528b, #21918c, #5ec962, #fde725)'
-                  : colormap === 'inferno'
-                  ? 'linear-gradient(to right, #000004, #57106e, #bb3754, #f98e09, #fcffa4)'
-                  : colormap === 'coolwarm'
-                  ? 'linear-gradient(to right, #3b4cc0, #8cb2e9, #ddd, #f49a7b, #b40426)'
-                  : colormap === 'plasma'
-                  ? 'linear-gradient(to right, #0d0887, #6a00a8, #b12a90, #e16462, #fca636, #f0f921)'
-                  : 'linear-gradient(to right, #30123b, #4682b4, #2cf4a6, #c2e537, #f77a18, #7a0403)'
+                background: getColorbarGradient(colormap)
               }}
             />
           </div>
